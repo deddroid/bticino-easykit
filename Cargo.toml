@@ -19,6 +19,7 @@ name = "bticino-easykit"
 path = "src/bin/cli.rs"
 
 [dependencies]
+base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 dirs = "5"
 fcm_receiver_rs = "0.1.1"
