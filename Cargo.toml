@@ -1,0 +1,30 @@
+[package]
+name = "bticino-easykit"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "Unofficial Linux/Windows client for the BTicino EASYKIT WiFi video door entry kit (Netatmo cloud)"
+license = "MIT"
+repository = "https://github.com/deddroid/bticino-easykit"
+readme = "README.md"
+keywords = ["bticino", "netatmo", "intercom", "doorbell", "easykit"]
+categories = ["command-line-utilities"]
+
+[lib]
+name = "bticino_easykit"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bticino-easykit"
+path = "src/bin/cli.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+dirs = "5"
+fcm_receiver_rs = "0.1.1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+rpassword = "7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+toml = "0.8"
