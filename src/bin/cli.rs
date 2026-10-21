@@ -4,6 +4,9 @@ use std::process::ExitCode;
 use bticino_easykit::{Client, Home, ModuleKind, Result};
 use clap::{Parser, Subcommand};
 
+#[path = "cli/session.rs"]
+mod session;
+
 #[derive(Parser)]
 #[command(version, about = "Control a BTicino EASYKIT WiFi video door entry kit")]
 struct Cli {
@@ -41,6 +44,17 @@ enum Cmd {
         /// Output directory (default: ./live-<timestamp>)
         #[arg(long)]
         out: Option<std::path::PathBuf>,
+    },
+    /// Guided on-site test: ring, answer, record, open each lock (asks first)
+    TestSession {
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+        /// Minutes to wait for the ring
+        #[arg(long, default_value_t = 10)]
+        wait_minutes: u64,
+        /// Countdown before each lock opens, after you confirm
+        #[arg(long, default_value_t = 10)]
+        unlock_delay: u64,
     },
     /// Stop call notifications to this computer (undoes `listen`)
     UnregisterPush,
@@ -145,6 +159,7 @@ fn run(cli: Cli) -> Result<()> {
             ))?;
             println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
         }
+        Cmd::TestSession { out, wait_minutes, unlock_delay } => session::run(out, wait_minutes, unlock_delay)?,
         Cmd::UnregisterPush => match bticino_easykit::push::drop_push_context(&mut c)? {
             Some(r) => println!("droppushcontext: {r}"),
             None => println!("No push registration saved."),

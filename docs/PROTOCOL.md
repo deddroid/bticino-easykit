@@ -127,7 +127,18 @@ Registration (`u10.d.d` / `u10.d.k`), JSON POST:
 /api/droppushcontext {"credentials":"{\"device_token\":\"<fcm token>\"}","type":"Android"}
 ```
 
-Status: **[unverified]** until a ring is received with `bticino-easykit listen`.
+`addpushcontext` answers `{"status":"ok"}` with either JSON or form bodies
+**[verified]**, but `droppushcontext` then answers 406
+`{"error":{"code":7,"message":"Nothing to drop"}}` for every variant tried
+(JSON/form, with/without `app_type`). **[open]**
+
+FCM registration that works **[verified]**: GCM check-in, `register3` as
+`org.chromium.linux` with a `wp:` subtype (retry on `PHONE_REGISTRATION_ERROR`),
+Firebase Installation and `fcmregistrations` web registration, all with
+`X-Android-Package`/`X-Android-Cert` (the API key is restricted to the app).
+A pure Android `register3` is rejected with `FIS_AUTH_ERROR`.
+
+Delivery of call pushes to such a token: **[unverified]** until a ring.
 
 ## WebRTC live view on EASYKIT (observed 2026-10-21)
 

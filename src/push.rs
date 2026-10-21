@@ -47,6 +47,23 @@ impl Push {
         Self { push_type, extra_params, fields }
     }
 
+    /// Message from the push WebSocket: `{"type":"Websocket","push_type":…,"extra_params":{…}}`.
+    pub fn from_ws(v: &Value) -> Self {
+        let mut fields = BTreeMap::new();
+        if let Some(o) = v.as_object() {
+            for (k, x) in o {
+                if k != "extra_params" {
+                    fields.insert(k.clone(), x.as_str().map(str::to_owned).unwrap_or_else(|| x.to_string()));
+                }
+            }
+        }
+        Self {
+            push_type: v["push_type"].as_str().unwrap_or_default().to_owned(),
+            extra_params: v["extra_params"].clone(),
+            fields,
+        }
+    }
+
     /// Decrypted web push: `{"data": {"push_type": ..., "extra_params": ...}, ...}`.
     pub fn from_webpush(bytes: &[u8]) -> Self {
         let v: Value = serde_json::from_slice(bytes).unwrap_or(Value::Null);
@@ -211,7 +228,13 @@ pub fn drop_push_context(api: &mut Client) -> Result<Option<Value>> {
     else {
         return Ok(None);
     };
-    let r = api.post(p::DROPPUSHCONTEXT_PATH, &p::droppushcontext(&st.fcm_token))?;
+    // The cloud answers 406 `{"code":7,"message":"Nothing to drop"}` even
+    // right after a successful add, with JSON or form bodies alike; treat it
+    // as done and forget the local identity anyway.
+    let r = match api.post(p::DROPPUSHCONTEXT_PATH, &p::droppushcontext(&st.fcm_token)) {
+        Err(Error::Api { status: 406, body }) => serde_json::from_str(&body).unwrap_or(Value::Null),
+        other => other?,
+    };
     std::fs::remove_file(state_path())?;
     Ok(Some(r))
 }
@@ -226,6 +249,40 @@ pub fn listen(mut c: FcmClient, on_push: impl Fn(Push) + Send + Sync + 'static) 
     }));
     c.on_data_message = Some(Arc::new(move |bytes| on_push(Push::from_webpush(&bytes))));
     c.start_listening().map_err(|e| Error::Other(format!("FCM listen: {e}")))
+}
+
+/// Listens on the push WebSocket (`app_camera`, no filter) and forwards
+/// every message. Re-subscribes with a fresh token every 50 minutes.
+pub async fn listen_ws(
+    mut token: impl FnMut() -> Result<String> + Send,
+    tx: tokio::sync::mpsc::UnboundedSender<Push>,
+) -> Result<()> {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    let (mut ws, _) = tokio_tungstenite::connect_async(p::PUSH_WS_URL)
+        .await
+        .map_err(|e| Error::Other(format!("push ws: {e}")))?;
+    let subscribe = |t: String| Message::Text(p::push_subscribe(&t).to_string().into());
+    ws.send(subscribe(token()?)).await.map_err(|e| Error::Other(e.to_string()))?;
+    let mut resub = tokio::time::interval(std::time::Duration::from_secs(50 * 60));
+    resub.tick().await;
+    loop {
+        tokio::select! {
+            _ = resub.tick() => {
+                ws.send(subscribe(token()?)).await.map_err(|e| Error::Other(e.to_string()))?;
+            }
+            m = ws.next() => match m {
+                Some(Ok(Message::Text(t))) => {
+                    if let Ok(v) = serde_json::from_str::<Value>(&t) {
+                        let _ = tx.send(Push::from_ws(&v));
+                    }
+                }
+                Some(Ok(Message::Close(_))) | None => return Err(Error::Other("push ws closed".into())),
+                Some(Err(e)) => return Err(Error::Other(format!("push ws: {e}"))),
+                _ => {}
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -251,6 +308,14 @@ mod tests {
             br#"{"data":{"push_type":"BDIY-rtc","extra_params":"{\"data\":{\"type\":\"terminate\"}}"},"from":"514810499773"}"#,
         );
         assert_eq!(p.rtc_type(), Some("terminate"));
+    }
+
+    #[test]
+    fn parses_ws_message() {
+        let v = serde_json::json!({"type":"Websocket","push_type":"BDIY-incoming_call","extra_params":{"session_id":"s"}});
+        let p = Push::from_ws(&v);
+        assert_eq!(p.push_type, "BDIY-incoming_call");
+        assert_eq!(p.extra_params["session_id"], "s");
     }
 
     #[test]
