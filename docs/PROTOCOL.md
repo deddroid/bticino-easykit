@@ -172,6 +172,25 @@ so the incoming call can only be joined by answering its `BDIY-rtc` offer.
   3. The device is DTLS client (`setup:active`) and only ever sees peer-reflexive
      candidates for us; on the LAN the selected pair is direct host↔device.
 
+## Audio
+
+The device sends Opus (PT 111, 48 kHz, `sprop-maxcapturerate=16000`) and
+expects a sendrecv audio m-line with a real SSRC from the client. The client
+sends 20 ms Opus frames: silence (`F8 FF FE`) by default, microphone audio
+while push-to-talk is held. Receiving and decoding the device audio is
+**[verified]**; hearing it and talking back is **[unverified]**.
+
+## Answering a call (implemented, **[unverified]**)
+
+1. `BDIY-incoming_call` (WebSocket and FCM) → show the ring.
+2. `BDIY-rtc` with `data.type = "offer"` (FCM only) → keep `session_id`,
+   `tag_id`, `device_id`, `correlation_id` and the SDP.
+3. On "Answer": set the offer as remote description, add the local audio
+   track, create the answer and send `rtc`/`answer` on `/appws/` with those
+   ids, then trickle candidates right away.
+4. `rescind` (answered elsewhere), `terminate`, `missed_call` or
+   `accepted_call` for the same `session_id` end the ring.
+
 ## WebRTC video/audio
 
 Signaling on `wss://app-ws.netatmo.net/appws/` (`app_type: app_security`),
