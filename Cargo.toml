@@ -66,3 +66,6 @@ ksni = { version = "0.3", default-features = false, features = ["tokio"], option
 tray-icon = { version = "0.26", optional = true }
 windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"], optional = true }
 winreg = { version = "0.56", optional = true }
+
+[target."cfg(windows)".build-dependencies]
+winresource = "0.1"

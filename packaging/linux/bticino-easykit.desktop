@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=BTicino EASYKIT
+GenericName=Video door entry
+GenericName[it]=Videocitofono
+Comment=Live view, calls and door release for the BTicino EASYKIT WiFi kit
+Comment[it]=Visione dal vivo, chiamate e apertura porta per il kit BTicino EASYKIT WiFi
+Exec=bticino-easykit-gui
+Icon=bticino-easykit
+Terminal=false
+Categories=Network;
+Keywords=bticino;netatmo;intercom;doorbell;citofono;
+StartupWMClass=bticino-easykit

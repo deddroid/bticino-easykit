@@ -34,6 +34,21 @@ enum Cmd {
         #[arg(long)]
         home: Option<String>,
     },
+    /// Open a door lock (by name or id); asks for confirmation unless --yes
+    Open {
+        /// Lock name (e.g. "Cancello Pedonale") or module id; omit to list locks
+        lock: Option<String>,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Switch a staircase light on or off
+    Light {
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
+        /// Light name or id (default: the first one)
+        #[arg(long)]
+        id: Option<String>,
+    },
     /// Register for call notifications (FCM) and print them as they arrive
     Listen,
     /// Live view of the external unit: saves video.h264 + audio.ogg
@@ -71,12 +86,14 @@ enum Cmd {
 }
 
 fn pick_home(c: &mut Client, id: Option<&str>) -> Result<Home> {
-    let homes = c.homes()?;
     match id {
-        Some(id) => homes.into_iter().find(|h| h.id == id),
-        None => homes.into_iter().find(|h| h.bridge().is_some()),
+        Some(id) => c
+            .homes()?
+            .into_iter()
+            .find(|h| h.id == id)
+            .ok_or_else(|| bticino_easykit::Error::Other(format!("no home {id}"))),
+        None => bticino_easykit::actions::default_home(c),
     }
-    .ok_or_else(|| bticino_easykit::Error::Other("no home with an intercom bridge found".into()))
 }
 
 fn run(cli: Cli) -> Result<()> {
@@ -127,6 +144,44 @@ fn run(cli: Cli) -> Result<()> {
                     println!("  -> EASYKIT (BDIY) variant detected");
                 }
             }
+        }
+        Cmd::Open { lock, yes } => {
+            let h = bticino_easykit::actions::default_home(&mut c)?;
+            let locks: Vec<_> = h.by_kind(ModuleKind::DoorLock).collect();
+            let Some(lock) = lock else {
+                for m in &locks {
+                    println!("{}  {}", m.id, m.name);
+                }
+                return Ok(());
+            };
+            let m = locks
+                .iter()
+                .find(|m| m.id == lock || m.name.eq_ignore_ascii_case(&lock))
+                .ok_or_else(|| bticino_easykit::Error::Other(format!("no lock named {lock:?}")))?;
+            if !yes {
+                print!("Open \"{}\"? [y/N] ", m.name);
+                std::io::stdout().flush()?;
+                let mut a = String::new();
+                std::io::stdin().read_line(&mut a)?;
+                if !matches!(a.trim().to_lowercase().as_str(), "y" | "yes" | "s" | "si" | "sì") {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
+            }
+            bticino_easykit::actions::unlock(&mut c, &h, &m.id)?;
+            println!("Open command sent to \"{}\".", m.name);
+        }
+        Cmd::Light { state, id } => {
+            let h = bticino_easykit::actions::default_home(&mut c)?;
+            let lights = bticino_easykit::actions::staircase_lights(&mut c, &h)?;
+            let (lid, name) = match &id {
+                Some(i) => lights.iter().find(|(lid, n)| lid == i || n.eq_ignore_ascii_case(i)),
+                None => lights.first(),
+            }
+            .cloned()
+            .ok_or_else(|| bticino_easykit::Error::Other("no staircase light found".into()))?;
+            bticino_easykit::actions::light(&mut c, &h, &lid, state == "on")?;
+            println!("Light \"{name}\" {state}.");
         }
         Cmd::Listen => {
             let (fcm, st, new) = bticino_easykit::push::load_or_register()?;
