@@ -62,11 +62,19 @@ pub enum Mode {
     Answer { session: RtcSession, offer_sdp: String },
 }
 
+/// Receives every video RTP packet (payload, marker bit).
+pub type VideoSink = Arc<dyn Fn(&Bytes, bool) + Send + Sync>;
+
+#[derive(Clone)]
 pub struct CallOptions {
-    pub out_dir: PathBuf,
+    /// Where to save `video.h264`, `audio.ogg` and the SDPs; `None` saves nothing.
+    pub out_dir: Option<PathBuf>,
     /// Hang up after this long (if the device has not already).
     pub max_duration: Duration,
     pub ice_servers: Vec<RTCIceServer>,
+    pub on_video: Option<VideoSink>,
+    /// Hang up as soon as this is notified.
+    pub stop: Option<Arc<Notify>>,
 }
 
 #[derive(Debug, Default, Clone, serde::Serialize)]
@@ -133,6 +141,7 @@ struct Handler {
     cand_tx: mpsc::UnboundedSender<String>,
     video: Arc<Mutex<Option<H26xWriter<File>>>>,
     audio: Arc<Mutex<Option<OggWriter<File>>>>,
+    on_video: Option<VideoSink>,
     stats: Arc<Stats>,
 }
 
@@ -188,11 +197,15 @@ impl PeerConnectionEventHandler for Handler {
                 });
             }
             let w = self.video.clone();
+            let sink = self.on_video.clone();
             tokio::spawn(async move {
                 while let Some(ev) = track.poll().await {
                     if let TrackRemoteEvent::OnRtpPacket(pkt) = ev {
                         stats.video_packets.fetch_add(1, Ordering::Relaxed);
                         stats.video_bytes.fetch_add(pkt.payload.len() as u64, Ordering::Relaxed);
+                        if let Some(sink) = &sink {
+                            sink(&pkt.payload, pkt.header.marker);
+                        }
                         if let Some(w) = w.lock().unwrap().as_mut() {
                             let _ = w.write_rtp(&pkt);
                         }
@@ -266,15 +279,26 @@ async fn send(ws: &mut Ws, log: &Log, v: Value) -> crate::Result<()> {
 }
 
 /// Runs one call until the device hangs up, the connection fails or
-/// `max_duration` elapses. Media is written to `out_dir/{video.h264,audio.ogg}`.
+/// `max_duration` elapses or `stop` fires. Media can be saved to `out_dir`.
 pub async fn run(token: String, mode: Mode, opts: CallOptions, log: Log) -> crate::Result<CallReport> {
     let started = Instant::now();
     let other = |e: webrtc::error::Error| crate::Error::Other(format!("webrtc: {e}"));
-    std::fs::create_dir_all(&opts.out_dir)?;
-    let video = Arc::new(Mutex::new(Some(H26xWriter::new(File::create(opts.out_dir.join("video.h264"))?, false))));
-    let audio = Arc::new(Mutex::new(Some(
-        OggWriter::new(File::create(opts.out_dir.join("audio.ogg"))?, 48000, 2).map_err(|e| crate::Error::Other(e.to_string()))?,
-    )));
+    let (video, audio) = match &opts.out_dir {
+        Some(dir) => {
+            std::fs::create_dir_all(dir)?;
+            (
+                Some(H26xWriter::new(File::create(dir.join("video.h264"))?, false)),
+                Some(OggWriter::new(File::create(dir.join("audio.ogg"))?, 48000, 2).map_err(|e| crate::Error::Other(e.to_string()))?),
+            )
+        }
+        None => (None, None),
+    };
+    let (video, audio) = (Arc::new(Mutex::new(video)), Arc::new(Mutex::new(audio)));
+    let save = |name: &str, text: &str| {
+        if let Some(dir) = &opts.out_dir {
+            let _ = std::fs::write(dir.join(name), text);
+        }
+    };
 
     let (audio_codec, video_codec) = codecs();
     let mut me = MediaEngine::default();
@@ -299,6 +323,7 @@ pub async fn run(token: String, mode: Mode, opts: CallOptions, log: Log) -> crat
         cand_tx,
         video: video.clone(),
         audio: audio.clone(),
+        on_video: opts.on_video.clone(),
         stats: stats.clone(),
     });
     let runtime = default_runtime().ok_or_else(|| crate::Error::Other("no async runtime".into()))?;
@@ -349,20 +374,20 @@ pub async fn run(token: String, mode: Mode, opts: CallOptions, log: Log) -> crat
             pc.set_local_description(offer).await.map_err(other)?;
             let _ = tokio::time::timeout(Duration::from_secs(5), gathered.notified()).await;
             let sdp = pc.local_description().await.map(|d| d.sdp).unwrap_or_default();
-            let _ = std::fs::write(opts.out_dir.join("sdp-local.txt"), &sdp);
+            save("sdp-local.txt", &sdp);
             let corr = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()).to_string();
             send(&mut ws, &log, p::rtc_offer(&device_id, &corr, &sdp, module_id.as_deref())).await?;
             RtcSession { session_id: String::new(), tag_id: String::new(), device_id, correlation_id: corr }
         }
         Mode::Answer { session, offer_sdp } => {
-            let _ = std::fs::write(opts.out_dir.join("sdp-remote.txt"), &offer_sdp);
+            save("sdp-remote.txt", &offer_sdp);
             pc.set_remote_description(RTCSessionDescription::offer(offer_sdp).map_err(other)?).await.map_err(other)?;
             pc.add_track(mic.clone() as Arc<dyn TrackLocal>).await.map_err(other)?;
             let answer = pc.create_answer(None).await.map_err(other)?;
             pc.set_local_description(answer).await.map_err(other)?;
             let _ = tokio::time::timeout(Duration::from_secs(5), gathered.notified()).await;
             let sdp = pc.local_description().await.map(|d| d.sdp).unwrap_or_default();
-            let _ = std::fs::write(opts.out_dir.join("sdp-local.txt"), &sdp);
+            save("sdp-local.txt", &sdp);
             send(&mut ws, &log, p::rtc_answer(&session, &sdp)).await?;
             can_trickle = true;
             session
@@ -393,9 +418,11 @@ pub async fn run(token: String, mode: Mode, opts: CallOptions, log: Log) -> crat
 
     let deadline = tokio::time::sleep(opts.max_duration);
     tokio::pin!(deadline);
+    let stop = opts.stop.clone().unwrap_or_default();
     let ended_by = loop {
         tokio::select! {
             _ = &mut deadline => break "timeout (we hung up)".to_owned(),
+            _ = stop.notified() => break "stopped (we hung up)".to_owned(),
             Some(c) = cand_rx.recv() => {
                 // Trickle ICE: the device sends none of its own and needs ours
                 // on the signaling channel once the session ids are known.
@@ -434,7 +461,7 @@ pub async fn run(token: String, mode: Mode, opts: CallOptions, log: Log) -> crat
                 match v["data"]["type"].as_str() {
                     Some("answer") => {
                         let sdp = v["data"]["session_description"]["sdp"].as_str().unwrap_or_default().to_owned();
-                        let _ = std::fs::write(opts.out_dir.join("sdp-remote.txt"), &sdp);
+                        save("sdp-remote.txt", &sdp);
                         if let Err(e) = async { pc.set_remote_description(RTCSessionDescription::answer(sdp)?).await }.await {
                             break format!("bad answer: {e}");
                         }

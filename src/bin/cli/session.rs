@@ -208,9 +208,11 @@ async fn session(client: Arc<Mutex<Client>>, dir: PathBuf, wait_minutes: u64, un
     let ice = call::ice_servers_from_turn(&api(&client, |c| c.turn()).await?);
     let token = api(&client, |c| c.token()).await?;
     let opts = |sub: &str| CallOptions {
-        out_dir: dir.join(sub),
+        out_dir: Some(dir.join(sub)),
         max_duration: Duration::from_secs(30),
         ice_servers: ice.clone(),
+        on_video: None,
+        stop: None,
     };
     if let Some((src, p)) = offer {
         say(tr("SDP offer received: answering the call from this PC…", "Offerta SDP ricevuta: rispondo alla chiamata da questo PC…"));

@@ -157,7 +157,13 @@ fn run(cli: Cli) -> Result<()> {
             let report = rt.block_on(bticino_easykit::call::run(
                 token,
                 bticino_easykit::call::Mode::Live { device_id: bridge, module_id: unit },
-                bticino_easykit::call::CallOptions { out_dir: out, max_duration: std::time::Duration::from_secs(seconds), ice_servers: ice },
+                bticino_easykit::call::CallOptions {
+                    out_dir: Some(out),
+                    max_duration: std::time::Duration::from_secs(seconds),
+                    ice_servers: ice,
+                    on_video: None,
+                    stop: None,
+                },
                 log,
             ))?;
             println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
