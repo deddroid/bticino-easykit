@@ -28,6 +28,7 @@ async-trait = "0.1"
 base64 = "0.22"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
+cpal = { version = "0.16", optional = true }
 dirs = "5"
 eframe = { version = "0.37", optional = true }
 env_logger = "0.11"
@@ -46,6 +47,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 toml = "0.8"
+unsafe-libopus = { version = "0.2", optional = true }
 webrtc = "0.21"
 
 [[example]]
@@ -55,7 +57,7 @@ required-features = ["gui"]
 [features]
 default = ["gui"]
 # Desktop app (egui) and H264 decoding; `--no-default-features` builds the CLI only.
-gui = ["dep:openh264", "dep:eframe", "dep:image", "dep:notify-rust", "dep:ksni", "dep:tray-icon", "dep:windows-sys", "dep:winreg"]
+gui = ["dep:openh264", "dep:cpal", "dep:unsafe-libopus", "dep:eframe", "dep:image", "dep:notify-rust", "dep:ksni", "dep:tray-icon", "dep:windows-sys", "dep:winreg"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "0.3", default-features = false, features = ["tokio"], optional = true }

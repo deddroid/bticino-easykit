@@ -128,6 +128,8 @@ pub struct App {
     password: String,
     confirm: Option<(String, String)>,
     texture: Option<(egui::TextureHandle, u64)>,
+    muted: bool,
+    talking: bool,
     vignettes: HashMap<String, VignetteState>,
     vignette_tx: std::sync::mpsc::Sender<(String, Option<egui::ColorImage>)>,
     vignette_rx: std::sync::mpsc::Receiver<(String, Option<egui::ColorImage>)>,
@@ -171,6 +173,8 @@ impl App {
             password: String::new(),
             confirm: None,
             texture: None,
+            muted: false,
+            talking: false,
             vignettes: HashMap::new(),
             vignette_tx,
             vignette_rx,
@@ -187,6 +191,13 @@ impl App {
         let mut s = self.shared.lock().unwrap();
         s.state.busy = true;
         if let Some(w) = &s.worker {
+            w.send(c);
+        }
+    }
+
+    /// Like [`Self::send`] without the busy spinner (instant toggles).
+    fn send_quiet(&self, c: Command) {
+        if let Some(w) = &self.shared.lock().unwrap().worker {
             w.send(c);
         }
     }
@@ -496,6 +507,18 @@ impl App {
                 ui.label(t(lang, "live.connecting"));
             } else if !running {
                 ui.label(&state);
+            }
+            if running {
+                ui.separator();
+                if ui.toggle_value(&mut self.muted, format!("🔇 {}", t(lang, "live.mute"))).changed() {
+                    self.send_quiet(Command::Mute(self.muted));
+                }
+                let talk = ui.add(egui::Button::new(format!("🎤 {}", t(lang, "live.talk"))).selected(self.talking));
+                let down = talk.is_pointer_button_down_on();
+                if down != self.talking {
+                    self.talking = down;
+                    self.send_quiet(Command::Talk(down));
+                }
             }
         });
         if let Some((w, h, rgba, n)) = frame {

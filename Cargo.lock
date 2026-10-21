@@ -763,6 +763,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "clap",
+ "cpal",
  "dirs 5.0.1",
  "eframe",
  "env_logger",
@@ -783,6 +784,7 @@ dependencies = [
  "tokio-tungstenite",
  "toml",
  "tray-icon",
+ "unsafe-libopus",
  "webrtc",
  "windows-sys 0.61.2",
  "winreg 0.56.0",
@@ -3727,6 +3729,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
 dependencies = [
  "num-integer",
+ "num-traits",
+]
+
+[[package]]
+name = "num-complex"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
+dependencies = [
  "num-traits",
 ]
 
@@ -6937,6 +6948,17 @@ checksum = "fc1de2c688dc15305988b563c3854064043356019f97a4b46276fe734c4f07ea"
 dependencies = [
  "crypto-common 0.1.6",
  "subtle",
+]
+
+[[package]]
+name = "unsafe-libopus"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c757408e7256c910343c7b215c8c8b878948630eecc774baabcca0972376eb73"
+dependencies = [
+ "arrayref",
+ "num-complex",
+ "num-traits",
 ]
 
 [[package]]

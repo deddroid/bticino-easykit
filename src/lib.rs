@@ -2,6 +2,8 @@
 //! entry kit (and other BTicino intercoms on the Netatmo cloud).
 
 pub mod actions;
+#[cfg(feature = "gui")]
+pub mod audio;
 pub mod call;
 pub mod client;
 pub mod i18n;

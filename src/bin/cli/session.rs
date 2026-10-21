@@ -212,6 +212,8 @@ async fn session(client: Arc<Mutex<Client>>, dir: PathBuf, wait_minutes: u64, un
         max_duration: Duration::from_secs(30),
         ice_servers: ice.clone(),
         on_video: None,
+        on_audio: None,
+        mic: None,
         stop: None,
     };
     if let Some((src, p)) = offer {

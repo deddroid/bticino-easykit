@@ -162,6 +162,8 @@ fn run(cli: Cli) -> Result<()> {
                     max_duration: std::time::Duration::from_secs(seconds),
                     ice_servers: ice,
                     on_video: None,
+                    on_audio: None,
+                    mic: None,
                     stop: None,
                 },
                 log,

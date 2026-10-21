@@ -64,6 +64,10 @@ pub enum Mode {
 
 /// Receives every video RTP packet (payload, marker bit).
 pub type VideoSink = Arc<dyn Fn(&Bytes, bool) + Send + Sync>;
+/// Receives every Opus payload from the external unit.
+pub type AudioSink = Arc<dyn Fn(&Bytes) + Send + Sync>;
+/// Next 20 ms Opus frame to send; `None` sends silence.
+pub type MicSource = Arc<dyn Fn() -> Option<Vec<u8>> + Send + Sync>;
 
 #[derive(Clone)]
 pub struct CallOptions {
@@ -73,6 +77,8 @@ pub struct CallOptions {
     pub max_duration: Duration,
     pub ice_servers: Vec<RTCIceServer>,
     pub on_video: Option<VideoSink>,
+    pub on_audio: Option<AudioSink>,
+    pub mic: Option<MicSource>,
     /// Hang up as soon as this is notified.
     pub stop: Option<Arc<Notify>>,
 }
@@ -142,6 +148,7 @@ struct Handler {
     video: Arc<Mutex<Option<H26xWriter<File>>>>,
     audio: Arc<Mutex<Option<OggWriter<File>>>>,
     on_video: Option<VideoSink>,
+    on_audio: Option<AudioSink>,
     stats: Arc<Stats>,
 }
 
@@ -214,10 +221,14 @@ impl PeerConnectionEventHandler for Handler {
             });
         } else {
             let w = self.audio.clone();
+            let sink = self.on_audio.clone();
             tokio::spawn(async move {
                 while let Some(ev) = track.poll().await {
                     if let TrackRemoteEvent::OnRtpPacket(pkt) = ev {
                         stats.audio_packets.fetch_add(1, Ordering::Relaxed);
+                        if let Some(sink) = &sink {
+                            sink(&pkt.payload);
+                        }
                         if let Some(w) = w.lock().unwrap().as_mut() {
                             let _ = w.write_rtp(&pkt);
                         }
@@ -324,6 +335,7 @@ pub async fn run(token: String, mode: Mode, opts: CallOptions, log: Log) -> crat
         video: video.clone(),
         audio: audio.clone(),
         on_video: opts.on_video.clone(),
+        on_audio: opts.on_audio.clone(),
         stats: stats.clone(),
     });
     let runtime = default_runtime().ok_or_else(|| crate::Error::Other("no async runtime".into()))?;
@@ -394,21 +406,20 @@ pub async fn run(token: String, mode: Mode, opts: CallOptions, log: Log) -> crat
         }
     };
 
-    // Silence on the local audio track, every 20 ms, once media can flow.
+    // Local audio track: microphone frames when available, otherwise
+    // silence (the device keeps its own microphone off without a sender).
     let connected = Arc::new(Notify::new());
     let mic_task = {
         let mic = mic.clone();
         let connected = connected.clone();
+        let source = opts.mic.clone();
         tokio::spawn(async move {
             connected.notified().await;
             let mut tick = tokio::time::interval(Duration::from_millis(20));
             loop {
                 tick.tick().await;
-                let s = Sample {
-                    data: Bytes::from_static(&OPUS_SILENCE),
-                    duration: Duration::from_millis(20),
-                    ..Sample::new(Instant::now())
-                };
+                let data = source.as_ref().and_then(|f| f()).map(Bytes::from).unwrap_or_else(|| Bytes::from_static(&OPUS_SILENCE));
+                let s = Sample { data, duration: Duration::from_millis(20), ..Sample::new(Instant::now()) };
                 if mic.sample_writer(ssrc, OPUS_PT).write_sample(&s).await.is_err() {
                     break;
                 }

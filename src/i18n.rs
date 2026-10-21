@@ -66,6 +66,8 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("live.stop", "Stop", "Ferma"),
     ("live.connecting", "Connecting…", "Connessione…"),
     ("live.ended", "Ended: {}", "Terminata: {}"),
+    ("live.mute", "Mute", "Muto"),
+    ("live.talk", "Hold to talk", "Tieni premuto per parlare"),
     ("live.busy", "The intercom is busy (ringing or in a call).", "Il citofono è occupato (sta squillando o è in chiamata)."),
     ("events.empty", "No calls yet.", "Nessuna chiamata."),
     ("events.accepted", "Answered", "Risposta"),

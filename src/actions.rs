@@ -65,6 +65,10 @@ pub enum Command {
     Light(String, bool),
     StartLive,
     StopLive,
+    /// Mute the external unit's audio on the speakers.
+    Mute(bool),
+    /// Push-to-talk: send the microphone instead of silence.
+    Talk(bool),
 }
 
 pub enum Update {
@@ -129,6 +133,8 @@ fn run(rx: Receiver<Command>, out: Sender<Update>, wake: Arc<dyn Fn() + Send + S
     };
     let mut home: Option<Home> = None;
     let mut live_stop: Option<Arc<Notify>> = None;
+    #[cfg(feature = "gui")]
+    let mut audio: Option<Arc<crate::audio::Audio>> = None;
     let mut watching = false;
 
     ctx.send(Update::LoggedIn(client.is_logged_in()));
@@ -189,11 +195,38 @@ fn run(rx: Receiver<Command>, out: Sender<Update>, wake: Arc<dyn Fn() + Send + S
                     let token = client.token()?;
                     let stop = Arc::new(Notify::new());
                     live_stop = Some(stop.clone());
-                    start_live(&rt, token, mode, ice, stop, ctx.clone());
+                    #[cfg(feature = "gui")]
+                    {
+                        if let Some(a) = audio.take() {
+                            a.stop();
+                        }
+                        audio = Some(crate::audio::Audio::start());
+                    }
+                    #[cfg(feature = "gui")]
+                    let a = audio.clone();
+                    #[cfg(not(feature = "gui"))]
+                    let a = None;
+                    start_live(&rt, token, mode, ice, stop, a, ctx.clone());
                 }
                 Command::StopLive => {
                     if let Some(s) = live_stop.take() {
                         s.notify_one();
+                    }
+                    #[cfg(feature = "gui")]
+                    if let Some(a) = audio.take() {
+                        a.stop();
+                    }
+                }
+                Command::Mute(_m) => {
+                    #[cfg(feature = "gui")]
+                    if let Some(a) = &audio {
+                        a.muted.store(_m, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+                Command::Talk(_t) => {
+                    #[cfg(feature = "gui")]
+                    if let Some(a) = &audio {
+                        a.talking.store(_t, std::sync::atomic::Ordering::Relaxed);
                     }
                 }
             }
@@ -234,6 +267,8 @@ fn start_live(
     mode: Mode,
     ice: Vec<rtc::peer_connection::transport::RTCIceServer>,
     stop: Arc<Notify>,
+    #[cfg(feature = "gui")] audio: Option<Arc<crate::audio::Audio>>,
+    #[cfg(not(feature = "gui"))] audio: Option<()>,
     ctx: Arc<Ctx>,
 ) {
     #[cfg(feature = "gui")]
@@ -259,6 +294,25 @@ fn start_live(
     #[cfg(not(feature = "gui"))]
     let on_video = None;
 
+    #[cfg(feature = "gui")]
+    let audio_end = audio.clone();
+    #[cfg(feature = "gui")]
+    let (on_audio, mic) = match audio {
+        Some(a) => {
+            let (play, talk) = (a.clone(), a);
+            (
+                Some(Arc::new(move |b: &bytes::Bytes| play.play(b)) as call::AudioSink),
+                Some(Arc::new(move || talk.next_mic_frame()) as call::MicSource),
+            )
+        }
+        None => (None, None),
+    };
+    #[cfg(not(feature = "gui"))]
+    let (on_audio, mic) = {
+        let _ = audio;
+        (None, None)
+    };
+
     let lctx = ctx.clone();
     let log: call::Log = Arc::new(move |_src, v| {
         if let Some(s) = v["connection_state"].as_str() {
@@ -270,11 +324,17 @@ fn start_live(
         max_duration: Duration::from_secs(10 * 60),
         ice_servers: ice,
         on_video,
+        on_audio,
+        mic,
         stop: Some(stop),
     };
     ctx.send(Update::LiveState("starting".into()));
     rt.spawn(async move {
         let r = call::run(token, mode, opts, log).await.map_err(|e| e.to_string());
+        #[cfg(feature = "gui")]
+        if let Some(a) = audio_end {
+            a.stop();
+        }
         ctx.send(Update::LiveEnded(r));
     });
 }
