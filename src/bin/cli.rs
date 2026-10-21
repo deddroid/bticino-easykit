@@ -33,6 +33,15 @@ enum Cmd {
     },
     /// Register for call notifications (FCM) and print them as they arrive
     Listen,
+    /// Live view of the external unit: saves video.h264 + audio.ogg
+    Live {
+        /// Seconds before hanging up
+        #[arg(long, default_value_t = 30)]
+        seconds: u64,
+        /// Output directory (default: ./live-<timestamp>)
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
     /// Stop call notifications to this computer (undoes `listen`)
     UnregisterPush,
     /// Show recent events: calls, door openings... (read-only)
@@ -118,6 +127,24 @@ fn run(cli: Cli) -> Result<()> {
                 println!("  extra_params: {:#}", p.extra_params);
             })?;
         }
+        Cmd::Live { seconds, out } => {
+            let h = pick_home(&mut c, None)?;
+            let bridge = h.bridge().ok_or_else(|| bticino_easykit::Error::Other("no bridge".into()))?.id.clone();
+            let unit = h.by_kind(ModuleKind::ExternalUnit).next().map(|m| m.id.clone());
+            let ice = bticino_easykit::call::ice_servers_from_turn(&c.turn()?);
+            let token = c.token()?;
+            let out = out.unwrap_or_else(|| format!("live-{}", unix_now()).into());
+            println!("Live view from {} ({} ICE servers) -> {}", unit.as_deref().unwrap_or("default unit"), ice.len(), out.display());
+            let log: bticino_easykit::call::Log = std::sync::Arc::new(|src, v| println!("[{src}] {v}"));
+            let rt = tokio::runtime::Runtime::new()?;
+            let report = rt.block_on(bticino_easykit::call::run(
+                token,
+                bticino_easykit::call::Mode::Live { device_id: bridge, module_id: unit },
+                bticino_easykit::call::CallOptions { out_dir: out, max_duration: std::time::Duration::from_secs(seconds), ice_servers: ice },
+                log,
+            ))?;
+            println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+        }
         Cmd::UnregisterPush => match bticino_easykit::push::drop_push_context(&mut c)? {
             Some(r) => println!("droppushcontext: {r}"),
             None => println!("No push registration saved."),
@@ -134,7 +161,13 @@ fn run(cli: Cli) -> Result<()> {
     Ok(())
 }
 
+fn unix_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
 fn main() -> ExitCode {
+    // RUST_LOG=webrtc=debug,rtc=debug shows ICE/DTLS internals.
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("off")).try_init();
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

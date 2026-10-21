@@ -210,6 +210,24 @@ impl Client {
         self.post(p::GETCONFIGS_PATH, &p::getconfigs(home_id, module_ids))
     }
 
+    /// TURN/STUN servers for WebRTC (`getcredentials`).
+    pub fn turn(&mut self) -> Result<Value> {
+        let token = self.access_token()?;
+        if debug_enabled() {
+            eprintln!(">> POST {}", p::TURN_URL);
+        }
+        let resp = self.http.post(p::TURN_URL).bearer_auth(token).json(&p::turn_request()).send()?;
+        let status = resp.status().as_u16();
+        let text = resp.text()?;
+        if debug_enabled() {
+            eprintln!("<< {status} {}", redact(&text));
+        }
+        if status >= 400 {
+            return Err(Error::Api { status, body: text });
+        }
+        serde_json::from_str(&text).map_err(|e| Error::Other(e.to_string()))
+    }
+
     pub fn set_state(&mut self, home: &Home, module_id: &str, state: Value) -> Result<Value> {
         let bridge = home
             .module(module_id)

@@ -152,6 +152,91 @@ pub fn push_subscribe(access_token: &str) -> Value {
     })
 }
 
+/// TURN/STUN credentials for WebRTC (POST, JSON body).
+pub const TURN_URL: &str = "https://app-turn.netatmo.net/api/getcredentials";
+
+pub fn turn_request() -> Value {
+    json!({ "client_type": "user" })
+}
+
+/// First message on the signaling WebSocket (`p30.h` in the app).
+pub fn signaling_subscribe(access_token: &str) -> Value {
+    json!({
+        "action": "subscribe",
+        "access_token": access_token,
+        "app_type": "app_security",
+        "version": "1.0",
+        "platform": "android",
+    })
+}
+
+/// Identifies one WebRTC session once the server or a push assigned it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RtcSession {
+    pub session_id: String,
+    pub tag_id: String,
+    pub device_id: String,
+    pub correlation_id: String,
+}
+
+/// Live view offer (`p30.g`): `module_id` selects the external unit.
+pub fn rtc_offer(device_id: &str, correlation_id: &str, sdp: &str, module_id: Option<&str>) -> Value {
+    let mut sd = json!({ "type": "call", "sdp": sdp });
+    if let Some(m) = module_id {
+        sd["module_id"] = json!(m);
+    }
+    json!({
+        "action": "rtc",
+        "data": { "type": "offer", "session_description": sd },
+        "device_id": device_id,
+        "correlation_id": correlation_id,
+    })
+}
+
+fn rtc_in_session(s: &RtcSession, data: Value) -> Value {
+    json!({
+        "action": "rtc",
+        "data": data,
+        "session_id": s.session_id,
+        "tag_id": s.tag_id,
+        "device_id": s.device_id,
+        "correlation_id": s.correlation_id,
+    })
+}
+
+/// Answer to a device offer received as a `*-rtc` push (`p30.i`).
+pub fn rtc_answer(s: &RtcSession, sdp: &str) -> Value {
+    rtc_in_session(s, json!({ "type": "answer", "session_description": { "type": "call", "sdp": sdp } }))
+}
+
+/// Trickle ICE candidate (`p30.n`).
+pub fn rtc_candidate(s: &RtcSession, candidate: &str, sdp_m_line_index: u16) -> Value {
+    rtc_in_session(
+        s,
+        json!({ "type": "candidate", "ice_candidate": { "sdp_m_line_index": sdp_m_line_index, "candidate": candidate } }),
+    )
+}
+
+/// Hang up (`p30.k`).
+pub fn rtc_terminate(s: &RtcSession) -> Value {
+    rtc_in_session(s, json!({ "type": "terminate" }))
+}
+
+/// Session carried by a `*-rtc` offer push (`extra_params`).
+pub fn session_from_push(extra_params: &Value) -> Option<RtcSession> {
+    let g = |k: &str| match &extra_params[k] {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    };
+    Some(RtcSession {
+        session_id: g("session_id")?,
+        tag_id: g("tag_id")?,
+        device_id: g("device_id")?,
+        correlation_id: g("correlation_id").unwrap_or_else(|| "0".into()),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,6 +281,35 @@ mod tests {
             addpushcontext("tok", "Linux", "1").to_string(),
             r#"{"app_type":"app_camera","app_version":"4.1.1.3","credentials":"{\"device_token\":\"tok\"}","device_version":"Linux","os_version":"1","type":"Android"}"#
         );
+    }
+
+    fn sess() -> RtcSession {
+        RtcSession { session_id: "s".into(), tag_id: "t".into(), device_id: "d".into(), correlation_id: "7".into() }
+    }
+
+    #[test]
+    fn offer_with_module() {
+        assert_eq!(
+            rtc_offer("d", "1", "v=0", Some("eu")).to_string(),
+            r#"{"action":"rtc","correlation_id":"1","data":{"session_description":{"module_id":"eu","sdp":"v=0","type":"call"},"type":"offer"},"device_id":"d"}"#
+        );
+    }
+
+    #[test]
+    fn answer_candidate_terminate_carry_session() {
+        assert_eq!(
+            rtc_answer(&sess(), "v=0").to_string(),
+            r#"{"action":"rtc","correlation_id":"7","data":{"session_description":{"sdp":"v=0","type":"call"},"type":"answer"},"device_id":"d","session_id":"s","tag_id":"t"}"#
+        );
+        assert_eq!(rtc_candidate(&sess(), "candidate:1", 0)["data"]["ice_candidate"]["sdp_m_line_index"], 0);
+        assert_eq!(rtc_terminate(&sess())["data"]["type"], "terminate");
+    }
+
+    #[test]
+    fn session_from_push_accepts_numeric_correlation() {
+        let ep = json!({"session_id":"s","tag_id":"t","device_id":"d","correlation_id":7});
+        assert_eq!(session_from_push(&ep), Some(sess()));
+        assert_eq!(session_from_push(&json!({"session_id":"s"})), None);
     }
 
     #[test]
