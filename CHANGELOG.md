@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-10-21
+
+### Changed
+- GUI: during a call the microphone is opened and closed with a click
+  instead of being held down; it turns red while open and every call
+  starts with it closed.
+
 ## [0.1.0] - 2026-10-21
 
 ### Added

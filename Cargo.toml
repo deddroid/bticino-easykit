@@ -1,6 +1,6 @@
 [package]
 name = "bticino-easykit"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.95"
 description = "Unofficial Linux/Windows client for the BTicino EASYKIT WiFi video door entry kit (Netatmo cloud)"
