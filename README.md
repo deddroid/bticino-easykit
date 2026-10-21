@@ -89,7 +89,7 @@ cargo build --release                        # GUI + CLI
 cargo build --release --no-default-features  # CLI only
 ```
 
-Linux needs `alsa-lib` (`libasound2-dev`), `openssl` and `pkg-config`.
+Linux needs `alsa-lib` (`libasound2-dev`) and `pkg-config`.
 
 ## Usage
 
@@ -142,7 +142,7 @@ How everything works is documented in [docs/PROTOCOL.md](docs/PROTOCOL.md).
   [bticino_intercom](https://github.com/k-the-hidden-hero/bticino_intercom)
   by k-the-hidden-hero and contributors: API, push and signaling groundwork.
 - [pyatmo](https://github.com/jabesq-org/pyatmo): Netatmo module types.
-- [fcm_receiver.rs](https://github.com/agusibrahim/fcm_receiver.rs) and
+- [fcm_receiver.rs](https://github.com/agusibrahim/fcm_receiver.rs) (vendored and trimmed in `vendor/fcm_receiver`) and
   [firebase-messaging](https://github.com/sdb9696/firebase-messaging): FCM client.
 - [webrtc-rs](https://github.com/webrtc-rs/webrtc), [egui](https://github.com/emilk/egui),
   [openh264](https://github.com/ralfbiedert/openh264-rs),

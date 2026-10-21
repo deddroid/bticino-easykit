@@ -17,3 +17,5 @@ All notable changes to this project are documented here. The format follows
 - CLI: `login`, `list`, `status`, `events`, `open`, `light`, `live`,
   `listen`, `test-session`.
 - Protocol notes in `docs/PROTOCOL.md`.
+- FCM client vendored from fcm_receiver_rs without OpenSSL and audio playback
+  (pure-Rust web push decryption), so Windows builds need no OpenSSL.

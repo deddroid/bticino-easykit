@@ -1,0 +1,40 @@
+# Vendored and trimmed copy of fcm_receiver_rs 0.1.1 by Agus Ibrahim
+# (https://github.com/agusibrahim/fcm_receiver.rs, MIT OR Apache-2.0).
+# Changes for bticino-easykit: no rodio/sound module, rustls instead of
+# native-tls, `ece` without its OpenSSL backend (a RustCrypto backend is
+# registered in `ece_backend.rs`), reqwest 0.12. See CHANGES.md.
+[package]
+name = "fcm_receiver_rs"
+version = "0.1.1+easykit.1"
+edition = "2021"
+authors = ["Agus Ibrahim"]
+description = "Receive Firebase Cloud Messaging notifications as an Android/Chrome client (vendored for bticino-easykit)"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "fcm_receiver_rs"
+path = "src/lib.rs"
+
+[dependencies]
+aes-gcm = { version = "0.10", features = ["aes"] }
+base64 = "0.22"
+bytes = "1"
+ece = { version = "2.3", default-features = false }
+hkdf = "0.12"
+hmac = "0.12"
+log = "0.4"
+p256 = { version = "0.13", features = ["pkcs8", "ecdh"] }
+rand = "0.8"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "1"
+url = "2"
+webpki-roots = "1"
+
+[dev-dependencies]
+ece = { version = "2.3", default-features = false, features = ["backend-test-helper"] }
