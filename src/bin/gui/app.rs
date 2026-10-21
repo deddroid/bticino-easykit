@@ -542,12 +542,21 @@ impl App {
                 if ui.toggle_value(&mut self.muted, format!("🔇 {}", t(lang, "live.mute"))).changed() {
                     self.send_quiet(Command::Mute(self.muted));
                 }
-                let talk = ui.add(egui::Button::new(format!("🎤 {}", t(lang, "live.talk"))).selected(self.talking));
-                let down = talk.is_pointer_button_down_on();
-                if down != self.talking {
-                    self.talking = down;
-                    self.send_quiet(Command::Talk(down));
+                // One click opens the microphone, another closes it.
+                let label = if self.talking { t(lang, "live.mic_on") } else { t(lang, "live.talk") };
+                let mut text = RichText::new(format!("🎤 {label}"));
+                if self.talking {
+                    text = text.color(Color32::from_rgb(220, 80, 80)).strong();
                 }
+                let mic = egui::Button::new(text).selected(self.talking);
+                if ui.add(mic).clicked() {
+                    self.talking = !self.talking;
+                    self.send_quiet(Command::Talk(self.talking));
+                }
+            } else {
+                // Every call starts with the microphone closed and audio on.
+                self.talking = false;
+                self.muted = false;
             }
         });
         if let Some((w, h, rgba, n)) = frame {
