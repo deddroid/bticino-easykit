@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libssl-dev pkg-config
+      - name: Build
+        shell: bash
+        # Hide the checkout and the cargo registry paths from the binaries.
+        run: |
+          export RUSTFLAGS="--remap-path-prefix=${GITHUB_WORKSPACE}=/build --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
+          cargo build --locked --release --target ${{ matrix.target }}
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          name=bticino-easykit-${GITHUB_REF_NAME}-linux-x86_64
+          mkdir -p "$name/packaging/linux" "$name/assets"
+          cp target/${{ matrix.target }}/release/bticino-easykit target/${{ matrix.target }}/release/bticino-easykit-gui "$name/"
+          cp LICENSE THIRD-PARTY-LICENSES.md README.md README.it.md CHANGELOG.md install.sh "$name/"
+          cp packaging/linux/bticino-easykit.desktop "$name/packaging/linux/"
+          cp -r assets/icons "$name/assets/"
+          tar czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "bticino-easykit-$env:GITHUB_REF_NAME-windows-x86_64"
+          New-Item -ItemType Directory $name | Out-Null
+          Copy-Item target/${{ matrix.target }}/release/bticino-easykit.exe, target/${{ matrix.target }}/release/bticino-easykit-gui.exe, LICENSE, THIRD-PARTY-LICENSES.md, README.md, README.it.md, CHANGELOG.md $name
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+          (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower() + "  $name.zip" | Out-File -Encoding ascii "$name.zip.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: |
+            *.tar.gz
+            *.zip
+            *.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Release notes from CHANGELOG
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v v="$v" '$0 ~ "^## \\[?"v"\\]?" {f=1; next} /^## / && f {exit} f' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "See CHANGELOG.md" > notes.md
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file notes.md

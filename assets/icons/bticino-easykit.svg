@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Entrance panel: camera, speaker grille, call button. Original artwork. -->
+  <rect x="16" y="16" width="224" height="224" rx="48" fill="#1f4e79"/>
+  <rect x="72" y="34" width="112" height="188" rx="22" fill="#eef3f8"/>
+  <circle cx="128" cy="76" r="20" fill="#1f4e79"/>
+  <circle cx="128" cy="76" r="9" fill="#5fb3ff"/>
+  <g fill="#1f4e79">
+    <rect x="98" y="112" width="60" height="7" rx="3.5"/>
+    <rect x="98" y="126" width="60" height="7" rx="3.5"/>
+    <rect x="98" y="140" width="60" height="7" rx="3.5"/>
+  </g>
+  <circle cx="128" cy="184" r="20" fill="#2e9d5b"/>
+  <path d="M120 184 a8 8 0 0 1 16 0" stroke="#fff" stroke-width="5" fill="none" stroke-linecap="round"/>
+</svg>

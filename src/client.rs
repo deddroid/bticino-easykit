@@ -61,7 +61,14 @@ pub fn redact(s: &str) -> String {
         match v {
             Value::Object(m) => {
                 for (k, x) in m.iter_mut() {
-                    if matches!(k.as_str(), "access_token" | "refresh_token" | "password" | "credential") {
+                    // Secrets, plus location and media links that would end
+                    // up in bug reports.
+                    if matches!(
+                        k.as_str(),
+                        "access_token" | "refresh_token" | "password" | "credential" | "credentials" | "device_token"
+                            | "coordinates" | "city" | "altitude" | "email" | "local_ipv4" | "url" | "snapshot_url"
+                            | "vignette_url" | "sdp"
+                    ) {
                         *x = Value::String("<redacted>".into());
                     } else {
                         walk(x);
@@ -190,6 +197,33 @@ impl Client {
         }
     }
 
+    /// Authenticated form-encoded POST.
+    pub fn post_form(&mut self, path: &str, form: &[(&str, String)]) -> Result<Value> {
+        let mut retried = false;
+        loop {
+            let token = self.access_token()?;
+            let url = format!("{}{}", p::BASE_URL, path);
+            if debug_enabled() {
+                eprintln!(">> POST {url} (form) {:?}", form.iter().map(|(k, _)| *k).collect::<Vec<_>>());
+            }
+            let resp = self.http.post(&url).bearer_auth(token).form(form).send()?;
+            let status = resp.status().as_u16();
+            let text = resp.text()?;
+            if debug_enabled() {
+                eprintln!("<< {status} {}", redact(&text));
+            }
+            if (status == 401 || status == 403) && !retried {
+                retried = true;
+                self.refresh()?;
+                continue;
+            }
+            if status >= 400 {
+                return Err(Error::Api { status, body: text });
+            }
+            return serde_json::from_str(&text).map_err(|e| Error::Other(e.to_string()));
+        }
+    }
+
     pub fn homesdata_raw(&mut self) -> Result<Value> {
         self.post(p::HOMESDATA_PATH, &p::homesdata())
     }
@@ -208,6 +242,24 @@ impl Client {
 
     pub fn configs(&mut self, home_id: &str, module_ids: &[&str]) -> Result<Value> {
         self.post(p::GETCONFIGS_PATH, &p::getconfigs(home_id, module_ids))
+    }
+
+    /// TURN/STUN servers for WebRTC (`getcredentials`).
+    pub fn turn(&mut self) -> Result<Value> {
+        let token = self.access_token()?;
+        if debug_enabled() {
+            eprintln!(">> POST {}", p::TURN_URL);
+        }
+        let resp = self.http.post(p::TURN_URL).bearer_auth(token).json(&p::turn_request()).send()?;
+        let status = resp.status().as_u16();
+        let text = resp.text()?;
+        if debug_enabled() {
+            eprintln!("<< {status} {}", redact(&text));
+        }
+        if status >= 400 {
+            return Err(Error::Api { status, body: text });
+        }
+        serde_json::from_str(&text).map_err(|e| Error::Other(e.to_string()))
     }
 
     pub fn set_state(&mut self, home: &Home, module_id: &str, state: Value) -> Result<Value> {
@@ -244,8 +296,8 @@ mod tests {
 
     #[test]
     fn redact_hides_tokens_recursively() {
-        let r = redact(r#"{"access_token":"x","body":{"refresh_token":"y","n":1}}"#);
-        assert!(!r.contains("\"x\"") && !r.contains("\"y\""));
+        let r = redact(r#"{"access_token":"x","body":{"refresh_token":"y","n":1,"homes":[{"city":"Roma","coordinates":[1,2]}]}}"#);
+        assert!(!r.contains("\"x\"") && !r.contains("\"y\"") && !r.contains("Roma") && !r.contains("[1,2]"));
         assert!(r.contains("\"n\":1"));
     }
 }

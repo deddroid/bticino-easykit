@@ -27,12 +27,16 @@ pub const CLIENT_ID: &str = "na_client_android_welcome";
 pub const CLIENT_SECRET: &str = "8ab584d62ca2a77e37ccc6b2c7e4f29e";
 pub const SCOPE: &str = "security_scopes";
 pub const APP_VERSION: &str = "4.1.1.3";
-pub const BUILD_NUMBER: &str = "4401103";
 pub const APP_TYPE: &str = "app_camera";
+/// `versionCode` of Home + Security 26.10.1.1. `addpushcontext`
+/// sends it as `app_version`; with an old value the call answers "ok" but
+/// nothing is stored (a later `droppushcontext` says "Nothing to drop").
+pub const APP_VERSION_CODE: &str = "500000030";
 
-/// User-Agent sent by the official app.
+/// Honest User-Agent: the API accepts it, so we do not pose as the
+/// official app. (The app sends `NetatmoApp(Security/v…) Android(…)`.)
 pub fn user_agent() -> String {
-    format!("NetatmoApp(Security/v{APP_VERSION}/{BUILD_NUMBER}) Android(13/Google/sdk_gphone64_arm64)")
+    format!("bticino-easykit/{} (+https://github.com/deddroid/bticino-easykit)", env!("CARGO_PKG_VERSION"))
 }
 
 /// Form fields for the password grant.
@@ -120,19 +124,18 @@ pub const ANDROID_CERT_SHA1: &str = "cdaf5d982a79b76743546599a87f7c45bac269d8";
 
 /// Registers an FCM token so the cloud sends call pushes (including the
 /// `BDIY-rtc` SDP offer, which never reaches the WebSocket) to this client.
-/// Mirrors `u10.d.d` in the official app.
 pub fn addpushcontext(fcm_token: &str, device_version: &str, os_version: &str) -> Value {
     json!({
         "credentials": json!({ "device_token": fcm_token }).to_string(),
         "device_version": device_version,
         "os_version": os_version,
         "type": "Android",
-        "app_version": APP_VERSION,
+        "app_version": APP_VERSION_CODE,
         "app_type": APP_TYPE,
     })
 }
 
-/// Undoes [`addpushcontext`] (`u10.d.k` in the official app).
+/// Undoes [`addpushcontext`].
 pub fn droppushcontext(fcm_token: &str) -> Value {
     json!({
         "credentials": json!({ "device_token": fcm_token }).to_string(),
@@ -152,16 +155,98 @@ pub fn push_subscribe(access_token: &str) -> Value {
     })
 }
 
+/// TURN/STUN credentials for WebRTC (POST, JSON body).
+pub const TURN_URL: &str = "https://app-turn.netatmo.net/api/getcredentials";
+
+pub fn turn_request() -> Value {
+    json!({ "client_type": "user" })
+}
+
+/// First message on the signaling WebSocket.
+pub fn signaling_subscribe(access_token: &str) -> Value {
+    json!({
+        "action": "subscribe",
+        "access_token": access_token,
+        "app_type": "app_security",
+        "version": "1.0",
+        "platform": "android",
+    })
+}
+
+/// Identifies one WebRTC session once the server or a push assigned it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RtcSession {
+    pub session_id: String,
+    pub tag_id: String,
+    pub device_id: String,
+    pub correlation_id: String,
+}
+
+/// Live view offer: `module_id` selects the external unit.
+pub fn rtc_offer(device_id: &str, correlation_id: &str, sdp: &str, module_id: Option<&str>) -> Value {
+    let mut sd = json!({ "type": "call", "sdp": sdp });
+    if let Some(m) = module_id {
+        sd["module_id"] = json!(m);
+    }
+    json!({
+        "action": "rtc",
+        "data": { "type": "offer", "session_description": sd },
+        "device_id": device_id,
+        "correlation_id": correlation_id,
+    })
+}
+
+fn rtc_in_session(s: &RtcSession, data: Value) -> Value {
+    json!({
+        "action": "rtc",
+        "data": data,
+        "session_id": s.session_id,
+        "tag_id": s.tag_id,
+        "device_id": s.device_id,
+        "correlation_id": s.correlation_id,
+    })
+}
+
+/// Answer to a device offer received as a `*-rtc` push.
+pub fn rtc_answer(s: &RtcSession, sdp: &str) -> Value {
+    rtc_in_session(s, json!({ "type": "answer", "session_description": { "type": "call", "sdp": sdp } }))
+}
+
+/// Trickle ICE candidate.
+pub fn rtc_candidate(s: &RtcSession, candidate: &str, sdp_m_line_index: u16) -> Value {
+    rtc_in_session(
+        s,
+        json!({ "type": "candidate", "ice_candidate": { "sdp_m_line_index": sdp_m_line_index, "candidate": candidate } }),
+    )
+}
+
+/// Hang up.
+pub fn rtc_terminate(s: &RtcSession) -> Value {
+    rtc_in_session(s, json!({ "type": "terminate" }))
+}
+
+/// Session carried by a `*-rtc` offer push (`extra_params`).
+pub fn session_from_push(extra_params: &Value) -> Option<RtcSession> {
+    let g = |k: &str| match &extra_params[k] {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    };
+    Some(RtcSession {
+        session_id: g("session_id")?,
+        tag_id: g("tag_id")?,
+        device_id: g("device_id")?,
+        correlation_id: g("correlation_id").unwrap_or_else(|| "0".into()),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn user_agent_matches_official_app() {
-        assert_eq!(
-            user_agent(),
-            "NetatmoApp(Security/v4.1.1.3/4401103) Android(13/Google/sdk_gphone64_arm64)"
-        );
+    fn user_agent_names_this_project() {
+        assert!(user_agent().starts_with("bticino-easykit/"));
     }
 
     #[test]
@@ -194,8 +279,37 @@ mod tests {
     fn addpushcontext_body() {
         assert_eq!(
             addpushcontext("tok", "Linux", "1").to_string(),
-            r#"{"app_type":"app_camera","app_version":"4.1.1.3","credentials":"{\"device_token\":\"tok\"}","device_version":"Linux","os_version":"1","type":"Android"}"#
+            r#"{"app_type":"app_camera","app_version":"500000030","credentials":"{\"device_token\":\"tok\"}","device_version":"Linux","os_version":"1","type":"Android"}"#
         );
+    }
+
+    fn sess() -> RtcSession {
+        RtcSession { session_id: "s".into(), tag_id: "t".into(), device_id: "d".into(), correlation_id: "7".into() }
+    }
+
+    #[test]
+    fn offer_with_module() {
+        assert_eq!(
+            rtc_offer("d", "1", "v=0", Some("eu")).to_string(),
+            r#"{"action":"rtc","correlation_id":"1","data":{"session_description":{"module_id":"eu","sdp":"v=0","type":"call"},"type":"offer"},"device_id":"d"}"#
+        );
+    }
+
+    #[test]
+    fn answer_candidate_terminate_carry_session() {
+        assert_eq!(
+            rtc_answer(&sess(), "v=0").to_string(),
+            r#"{"action":"rtc","correlation_id":"7","data":{"session_description":{"sdp":"v=0","type":"call"},"type":"answer"},"device_id":"d","session_id":"s","tag_id":"t"}"#
+        );
+        assert_eq!(rtc_candidate(&sess(), "candidate:1", 0)["data"]["ice_candidate"]["sdp_m_line_index"], 0);
+        assert_eq!(rtc_terminate(&sess())["data"]["type"], "terminate");
+    }
+
+    #[test]
+    fn session_from_push_accepts_numeric_correlation() {
+        let ep = json!({"session_id":"s","tag_id":"t","device_id":"d","correlation_id":7});
+        assert_eq!(session_from_push(&ep), Some(sess()));
+        assert_eq!(session_from_push(&json!({"session_id":"s"})), None);
     }
 
     #[test]

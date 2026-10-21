@@ -1,6 +1,8 @@
 # BTicino EASYKIT WiFi protocol notes
 
-Consolidated from the projects listed under [Sources](#sources). Items are
+Consolidated from the projects listed under [Sources](#sources). These notes
+describe only what goes over the network, for interoperability; they contain
+no code from the official app. Items are
 tagged **[verified]** once confirmed on the maintainer's own 310913 kit,
 **[others]** when confirmed on real hardware by another project, and
 **[unverified]** otherwise.
@@ -74,7 +76,9 @@ All are JSON `POST`s on `https://app.netatmo.net`.
          "modules":[{"id":"<module>","bridge":"<bridge mac>", "lock":false}]}}
 ```
 
-- Door release: `BNDL` + `{"lock": false}` (relocks by itself) **[others]**
+- Door release: `BNDL` + `{"lock": false}` (relocks by itself) **[verified]** on both
+  locks of the maintainer's kit (pedestrian gate and `appliance_type: gate` garage),
+  2026-10-21, seen opening on site
 - Staircase light: `BNSL` + `{"on": true|false}` **[others]**
 - Success: `{"status":"ok", …}`.
 
@@ -94,23 +98,24 @@ Events arrive with `push_type = "<bridge type>-<event>"`. On EASYKIT:
 
 | push_type | |
 |-----------|-|
-| `BDIY-incoming_call` | doorbell rang; `snapshot_url`, `vignette_url`, `session_id` **[others]** |
+| `BDIY-incoming_call` | doorbell rang **[verified]**, ~9 s after the press, on the `app_camera` WebSocket |
 | `BDIY-missed_call` / `BDIY-accepted_call` | **[others]** |
 | `BDIY-connection` / `BDIY-disconnection` | bridge online/offline **[unverified]** |
 | `BDIY-rtc` | **never received on EASYKIT** (bticino_intercom #72) |
 
 ## Call pushes over FCM (the EASYKIT key finding)
 
-From the official app 26.10.1.1, decompiled with REA + JADX:
+Observed behaviour of the official app 26.10.1.1, established to make this
+independent client interoperable with the kit:
 
-- The app subscribes to the push WebSocket with `"filter": "silent"`
-  (`v10.v.onSuccess`), so it does **not** get calls from the WebSocket.
-- Calls come from **Firebase Cloud Messaging**. `fo0.e.t` registers one
-  handler (`kf1.a`) for `BNC1|BDIY|BNC3` × `-rtc`, `-incoming_call`,
-  `-missed_call`. The FCM data keys are `push_type`, `extra_params` (JSON,
-  same shape as the WebSocket `extra_params`) and `alert`.
-- `p30.v.a` parses `extra_params.data` as an RTC message: `offer` (stores
-  `session_id` + `tag_id` per `device_id`, needs `session_description.sdp`),
+- The app subscribes to the push WebSocket with `"filter": "silent"`, so it
+  does **not** get calls from the WebSocket.
+- Calls come from **Firebase Cloud Messaging**, for `BNC1`, `BDIY` and
+  `BNC3` alike: `-rtc`, `-incoming_call`, `-missed_call`. The FCM data keys
+  are `push_type`, `extra_params` (JSON, same shape as on the WebSocket) and
+  `alert`.
+- `extra_params.data` of an `-rtc` push is an RTC message: `offer` (with
+  `session_id`, `tag_id`, `device_id` and `session_description.sdp`),
   `rescind`, `terminate` (optional `error.code` / `error.message`).
 - So on EASYKIT the `BDIY-rtc` offer is sent **only to FCM tokens**, which
   explains bticino_intercom #72.
@@ -120,14 +125,74 @@ Firebase project of the app (`res/values/strings.xml`): project
 `1:514810499773:android:ed5e6854097137cb`, package `com.netatmo.camera`,
 signing cert SHA-1 `cdaf5d982a79b76743546599a87f7c45bac269d8`.
 
-Registration (`u10.d.d` / `u10.d.k`), JSON POST:
+Registration, JSON POST:
 
 ```json
 /api/addpushcontext  {"credentials":"{\"device_token\":\"<fcm token>\"}","device_version":"…","os_version":"…","type":"Android","app_version":"…","app_type":"app_camera"}
 /api/droppushcontext {"credentials":"{\"device_token\":\"<fcm token>\"}","type":"Android"}
 ```
 
-Status: **[unverified]** until a ring is received with `bticino-easykit listen`.
+`app_version` in `addpushcontext` is the app **versionCode** (`500000030` for
+26.10.1.1), not the version name. With an old value such as
+`4.1.1.3` the call still answers `{"status":"ok"}` but stores nothing: a later
+`droppushcontext` answers 406 `{"error":{"code":7,"message":"Nothing to drop"}}`.
+With `500000030` the drop answers `ok` **[verified]**.
+
+FCM registration that works **[verified]**: GCM check-in, `register3` as
+`org.chromium.linux` with a `wp:` subtype (retry on `PHONE_REGISTRATION_ERROR`),
+Firebase Installation and `fcmregistrations` web registration, all with
+`X-Android-Package`/`X-Android-Cert` (the API key is restricted to the app).
+A pure Android `register3` is rejected with `FIS_AUTH_ERROR`.
+
+Delivery of call pushes: on the 2026-10-21 ring nothing reached FCM, but that
+registration used the old `app_version` and was never stored (see above).
+Delivery to a web-style token with the correct versionCode: **[unverified]**.
+
+A live-view offer sent **while the device is ringing** is rejected right after the
+ack with `terminate` `{"code":1,"message":"Max number of peers reached"}` **[verified]**,
+so the incoming call can only be joined by answering its `BDIY-rtc` offer.
+
+## WebRTC live view on EASYKIT (observed 2026-10-21)
+
+**[verified]** on the maintainer's kit (fw 1.00.11):
+
+- `offer` with `module_id` of the `BNEU` → ack with `session_id`/`tag_id`,
+  then `answer` (GStreamer webrtcbin: `msid user…@host-…`,
+  `webrtctransceiver`, `setup:active`, H264 PT 109 profile `42e01f`
+  15 fps with `sprop-parameter-sets`, Opus PT 111 `sprop-maxcapturerate=16000`).
+- The answer carries **no ICE candidates**, and the device never trickles any.
+- Client candidates sent before the answer are rejected with ack
+  `{"status":"error","error":{"code":13,"message":"Received ICE candidate before answer"}}`;
+  after the answer they are acked `ok`.
+- Without a working media path the device sends `terminate` ~30 s after the offer.
+- **Media works [verified]**: H264 640×480 ~15 fps + Opus 48 kHz, held for
+  the whole requested duration (no ~10 s cut-off). Requirements found the hard way:
+  1. The device's DTLS certificate has an RSA key < 2048 bits; webrtc-rs rejects
+     its CertificateVerify (`ErrKeySignatureMismatch`) unless
+     `allow_insecure_verification_algorithm` is set (fingerprint check unchanged).
+  2. With `SRTP_AEAD_AES_128_GCM` negotiated the handshake completes but the device
+     sends **no media at all**; offering only `SRTP_AES128_CM_HMAC_SHA1_80` fixes it.
+  3. The device is DTLS client (`setup:active`) and only ever sees peer-reflexive
+     candidates for us; on the LAN the selected pair is direct host↔device.
+
+## Audio
+
+The device sends Opus (PT 111, 48 kHz, `sprop-maxcapturerate=16000`) and
+expects a sendrecv audio m-line with a real SSRC from the client. The client
+sends 20 ms Opus frames: silence (`F8 FF FE`) by default, microphone audio
+while push-to-talk is held. Receiving and decoding the device audio is
+**[verified]**; hearing it and talking back is **[unverified]**.
+
+## Answering a call (implemented, **[unverified]**)
+
+1. `BDIY-incoming_call` (WebSocket and FCM) → show the ring.
+2. `BDIY-rtc` with `data.type = "offer"` (FCM only) → keep `session_id`,
+   `tag_id`, `device_id`, `correlation_id` and the SDP.
+3. On "Answer": set the offer as remote description, add the local audio
+   track, create the answer and send `rtc`/`answer` on `/appws/` with those
+   ids, then trickle candidates right away.
+4. `rescind` (answered elsewhere), `terminate`, `missed_call` or
+   `accepted_call` for the same `session_id` end the ring.
 
 ## WebRTC video/audio
 
