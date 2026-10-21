@@ -55,6 +55,9 @@ enum Cmd {
         /// Countdown before each lock opens, after you confirm
         #[arg(long, default_value_t = 10)]
         unlock_delay: u64,
+        /// Read confirmations from <dir>/answer-N files instead of the terminal
+        #[arg(long)]
+        answers_dir: Option<std::path::PathBuf>,
     },
     /// Stop call notifications to this computer (undoes `listen`)
     UnregisterPush,
@@ -159,7 +162,9 @@ fn run(cli: Cli) -> Result<()> {
             ))?;
             println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
         }
-        Cmd::TestSession { out, wait_minutes, unlock_delay } => session::run(out, wait_minutes, unlock_delay)?,
+        Cmd::TestSession { out, wait_minutes, unlock_delay, answers_dir } => {
+            session::run(out, wait_minutes, unlock_delay, answers_dir)?
+        }
         Cmd::UnregisterPush => match bticino_easykit::push::drop_push_context(&mut c)? {
             Some(r) => println!("droppushcontext: {r}"),
             None => println!("No push registration saved."),

@@ -36,7 +36,26 @@ fn say(msg: &str) {
     println!("\n>>> {msg}");
 }
 
+/// With `--answers-dir`, answers come from files instead of the terminal:
+/// question N waits for `<dir>/answer-N` (e.g. written by an assistant
+/// relaying the user's replies from a phone). Otherwise stdin is used.
+static ANSWERS: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+static ASKED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 async fn ask(prompt: String) -> String {
+    if let Some(Some(dir)) = ANSWERS.get() {
+        let n = ASKED.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let f = dir.join(format!("answer-{n}"));
+        println!("{prompt} [waiting for {}]", f.display());
+        loop {
+            if let Ok(s) = std::fs::read_to_string(&f) {
+                let a = s.trim().to_lowercase();
+                println!("    <- {a}");
+                return a;
+            }
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+    }
     tokio::task::spawn_blocking(move || {
         print!("{prompt} ");
         let _ = std::io::stdout().flush();
@@ -79,7 +98,11 @@ async fn api<T: Send + 'static>(
         .map_err(|e| bticino_easykit::Error::Other(e.to_string()))?
 }
 
-pub fn run(out: Option<PathBuf>, wait_minutes: u64, unlock_delay: u64) -> Result<()> {
+pub fn run(out: Option<PathBuf>, wait_minutes: u64, unlock_delay: u64, answers_dir: Option<PathBuf>) -> Result<()> {
+    if let Some(d) = &answers_dir {
+        std::fs::create_dir_all(d)?;
+    }
+    let _ = ANSWERS.set(answers_dir);
     let dir = out.unwrap_or_else(|| format!("captures/session-{}", super::unix_now()).into());
     std::fs::create_dir_all(&dir)?;
     // The blocking HTTP client must be created and dropped outside the
