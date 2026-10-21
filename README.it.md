@@ -20,7 +20,7 @@ principali su Linux e Windows.
 ## Funzioni
 
 - **Visione dal vivo** del posto esterno (video H264) con **audio
-  bidirezionale**: ascolti dalle casse, tieni premuto un pulsante per parlare.
+  bidirezionale**: ascolti dalle casse, con un clic apri il microfono.
 - **Apertura di porta e cancello** (tutte le serrature del kit), con conferma.
 - **Luce scale** accesa/spenta, comprese le luci che l'app nasconde.
 - **Notifica sul desktop** quando suonano, con la foto del visitatore.

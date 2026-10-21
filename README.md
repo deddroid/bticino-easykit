@@ -20,7 +20,7 @@ Windows.
 ## Features
 
 - **Live view** of the entrance panel (H264 video) with **two-way audio**:
-  listen through the speakers, hold a button to talk.
+  listen through the speakers, click to open the microphone.
 - **Open the door and the gate** (every lock of the kit), with a confirmation.
 - **Staircase light** on/off, including lights the phone app hides.
 - **Ring notifications** on the desktop with the visitor's snapshot.
