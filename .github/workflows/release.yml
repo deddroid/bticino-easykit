@@ -28,9 +28,11 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libssl-dev pkg-config
       - name: Build
-        run: cargo build --locked --release --target ${{ matrix.target }}
-        env:
-          RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=/build
+        shell: bash
+        # Hide the checkout and the cargo registry paths from the binaries.
+        run: |
+          export RUSTFLAGS="--remap-path-prefix=${GITHUB_WORKSPACE}=/build --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
+          cargo build --locked --release --target ${{ matrix.target }}
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
