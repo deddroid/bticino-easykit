@@ -228,9 +228,8 @@ pub fn drop_push_context(api: &mut Client) -> Result<Option<Value>> {
     else {
         return Ok(None);
     };
-    // The cloud answers 406 `{"code":7,"message":"Nothing to drop"}` even
-    // right after a successful add, with JSON or form bodies alike; treat it
-    // as done and forget the local identity anyway.
+    // 406 `{"code":7,"message":"Nothing to drop"}` means nothing was stored
+    // (e.g. an add made by an older version); forget the identity anyway.
     let r = match api.post(p::DROPPUSHCONTEXT_PATH, &p::droppushcontext(&st.fcm_token)) {
         Err(Error::Api { status: 406, body }) => serde_json::from_str(&body).unwrap_or(Value::Null),
         other => other?,

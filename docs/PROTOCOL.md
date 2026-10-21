@@ -129,10 +129,11 @@ Registration (`u10.d.d` / `u10.d.k`), JSON POST:
 /api/droppushcontext {"credentials":"{\"device_token\":\"<fcm token>\"}","type":"Android"}
 ```
 
-`addpushcontext` answers `{"status":"ok"}` with either JSON or form bodies
-**[verified]**, but `droppushcontext` then answers 406
-`{"error":{"code":7,"message":"Nothing to drop"}}` for every variant tried
-(JSON/form, with/without `app_type`). **[open]**
+`app_version` in `addpushcontext` is the app **versionCode** (`500000030` for
+26.10.1.1, from `n40.a.b`), not the version name. With an old value such as
+`4.1.1.3` the call still answers `{"status":"ok"}` but stores nothing: a later
+`droppushcontext` answers 406 `{"error":{"code":7,"message":"Nothing to drop"}}`.
+With `500000030` the drop answers `ok` **[verified]**.
 
 FCM registration that works **[verified]**: GCM check-in, `register3` as
 `org.chromium.linux` with a `wp:` subtype (retry on `PHONE_REGISTRATION_ERROR`),
@@ -140,10 +141,9 @@ Firebase Installation and `fcmregistrations` web registration, all with
 `X-Android-Package`/`X-Android-Cert` (the API key is restricted to the app).
 A pure Android `register3` is rejected with `FIS_AUTH_ERROR`.
 
-Delivery of call pushes to such a (web) token: **not delivered [verified]** — on a
-real ring neither `-incoming_call` nor `-rtc` reached it, while the WebSocket got
-`BDIY-incoming_call`. Together with "Nothing to drop", the backend most likely
-ignores non-Android tokens. A genuine Android FCM registration is needed. **[open]**
+Delivery of call pushes: on the 2026-10-21 ring nothing reached FCM, but that
+registration used the old `app_version` and was never stored (see above).
+Delivery to a web-style token with the correct versionCode: **[unverified]**.
 
 A live-view offer sent **while the device is ringing** is rejected right after the
 ack with `terminate` `{"code":1,"message":"Max number of peers reached"}` **[verified]**,

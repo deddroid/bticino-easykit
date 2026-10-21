@@ -29,6 +29,10 @@ pub const SCOPE: &str = "security_scopes";
 pub const APP_VERSION: &str = "4.1.1.3";
 pub const BUILD_NUMBER: &str = "4401103";
 pub const APP_TYPE: &str = "app_camera";
+/// `versionCode` of Home + Security 26.10.1.1 (`n40.a.b`). `addpushcontext`
+/// sends it as `app_version`; with an old value the call answers "ok" but
+/// nothing is stored (a later `droppushcontext` says "Nothing to drop").
+pub const APP_VERSION_CODE: &str = "500000030";
 
 /// User-Agent sent by the official app.
 pub fn user_agent() -> String {
@@ -127,7 +131,7 @@ pub fn addpushcontext(fcm_token: &str, device_version: &str, os_version: &str) -
         "device_version": device_version,
         "os_version": os_version,
         "type": "Android",
-        "app_version": APP_VERSION,
+        "app_version": APP_VERSION_CODE,
         "app_type": APP_TYPE,
     })
 }
@@ -279,7 +283,7 @@ mod tests {
     fn addpushcontext_body() {
         assert_eq!(
             addpushcontext("tok", "Linux", "1").to_string(),
-            r#"{"app_type":"app_camera","app_version":"4.1.1.3","credentials":"{\"device_token\":\"tok\"}","device_version":"Linux","os_version":"1","type":"Android"}"#
+            r#"{"app_type":"app_camera","app_version":"500000030","credentials":"{\"device_token\":\"tok\"}","device_version":"Linux","os_version":"1","type":"Android"}"#
         );
     }
 
