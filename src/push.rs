@@ -114,6 +114,10 @@ pub fn load_or_register() -> Result<(FcmClient, FcmState, bool)> {
     }
     let (private_key, auth_secret) = c.create_new_keys().map_err(|e| Error::Other(format!("FCM: {e}")))?;
     let (fcm_token, android_id, security_token) = register_web(&private_key, &auth_secret).map_err(|e| Error::Other(format!("FCM registration: {e}")))?;
+    // The listener needs the identity on the client, not only on disk.
+    c.android_id = android_id;
+    c.security_token = security_token;
+    c.fcm_token = Some(fcm_token.clone());
     let st = FcmState { android_id, security_token, fcm_token, private_key, auth_secret };
     std::fs::create_dir_all(config_dir())?;
     let body = toml::to_string(&st).map_err(|e| Error::Other(e.to_string()))?;
