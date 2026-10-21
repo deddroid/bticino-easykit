@@ -74,7 +74,9 @@ All are JSON `POST`s on `https://app.netatmo.net`.
          "modules":[{"id":"<module>","bridge":"<bridge mac>", "lock":false}]}}
 ```
 
-- Door release: `BNDL` + `{"lock": false}` (relocks by itself) **[others]**
+- Door release: `BNDL` + `{"lock": false}` (relocks by itself) **[verified]** on both
+  locks of the maintainer's kit (pedestrian gate and `appliance_type: gate` garage),
+  2026-10-21, seen opening on site
 - Staircase light: `BNSL` + `{"on": true|false}` **[others]**
 - Success: `{"status":"ok", …}`.
 
@@ -94,7 +96,7 @@ Events arrive with `push_type = "<bridge type>-<event>"`. On EASYKIT:
 
 | push_type | |
 |-----------|-|
-| `BDIY-incoming_call` | doorbell rang; `snapshot_url`, `vignette_url`, `session_id` **[others]** |
+| `BDIY-incoming_call` | doorbell rang **[verified]**, ~9 s after the press, on the `app_camera` WebSocket |
 | `BDIY-missed_call` / `BDIY-accepted_call` | **[others]** |
 | `BDIY-connection` / `BDIY-disconnection` | bridge online/offline **[unverified]** |
 | `BDIY-rtc` | **never received on EASYKIT** (bticino_intercom #72) |
@@ -138,7 +140,14 @@ Firebase Installation and `fcmregistrations` web registration, all with
 `X-Android-Package`/`X-Android-Cert` (the API key is restricted to the app).
 A pure Android `register3` is rejected with `FIS_AUTH_ERROR`.
 
-Delivery of call pushes to such a token: **[unverified]** until a ring.
+Delivery of call pushes to such a (web) token: **not delivered [verified]** — on a
+real ring neither `-incoming_call` nor `-rtc` reached it, while the WebSocket got
+`BDIY-incoming_call`. Together with "Nothing to drop", the backend most likely
+ignores non-Android tokens. A genuine Android FCM registration is needed. **[open]**
+
+A live-view offer sent **while the device is ringing** is rejected right after the
+ack with `terminate` `{"code":1,"message":"Max number of peers reached"}` **[verified]**,
+so the incoming call can only be joined by answering its `BDIY-rtc` offer.
 
 ## WebRTC live view on EASYKIT (observed 2026-10-21)
 
