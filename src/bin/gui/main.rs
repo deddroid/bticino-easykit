@@ -31,7 +31,7 @@ fn notify_ring(params: &Value, lang: Lang) {
         .summary(t(lang, "ring.title"))
         .body(body)
         .icon("bticino-easykit")
-        .appname("BTicino EASYKIT")
+        .appname("Door entry for BTicino EASYKIT")
         .show();
     if let Err(e) = r {
         log::warn!("notification failed: {e}");
@@ -41,7 +41,7 @@ fn notify_ring(params: &Value, lang: Lang) {
 fn native_options() -> eframe::NativeOptions {
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icons/bticino-easykit-256.png")).ok();
     let mut viewport = egui::ViewportBuilder::default()
-        .with_title("BTicino EASYKIT")
+        .with_title("Door entry for BTicino EASYKIT")
         .with_app_id("bticino-easykit")
         .with_inner_size([820.0, 620.0])
         .with_min_inner_size([480.0, 380.0]);

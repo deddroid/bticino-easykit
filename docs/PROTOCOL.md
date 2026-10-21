@@ -1,6 +1,8 @@
 # BTicino EASYKIT WiFi protocol notes
 
-Consolidated from the projects listed under [Sources](#sources). Items are
+Consolidated from the projects listed under [Sources](#sources). These notes
+describe only what goes over the network, for interoperability; they contain
+no code from the official app. Items are
 tagged **[verified]** once confirmed on the maintainer's own 310913 kit,
 **[others]** when confirmed on real hardware by another project, and
 **[unverified]** otherwise.
@@ -103,16 +105,17 @@ Events arrive with `push_type = "<bridge type>-<event>"`. On EASYKIT:
 
 ## Call pushes over FCM (the EASYKIT key finding)
 
-From the official app 26.10.1.1, decompiled with REA + JADX:
+Observed behaviour of the official app 26.10.1.1, established to make this
+independent client interoperable with the kit:
 
-- The app subscribes to the push WebSocket with `"filter": "silent"`
-  (`v10.v.onSuccess`), so it does **not** get calls from the WebSocket.
-- Calls come from **Firebase Cloud Messaging**. `fo0.e.t` registers one
-  handler (`kf1.a`) for `BNC1|BDIY|BNC3` × `-rtc`, `-incoming_call`,
-  `-missed_call`. The FCM data keys are `push_type`, `extra_params` (JSON,
-  same shape as the WebSocket `extra_params`) and `alert`.
-- `p30.v.a` parses `extra_params.data` as an RTC message: `offer` (stores
-  `session_id` + `tag_id` per `device_id`, needs `session_description.sdp`),
+- The app subscribes to the push WebSocket with `"filter": "silent"`, so it
+  does **not** get calls from the WebSocket.
+- Calls come from **Firebase Cloud Messaging**, for `BNC1`, `BDIY` and
+  `BNC3` alike: `-rtc`, `-incoming_call`, `-missed_call`. The FCM data keys
+  are `push_type`, `extra_params` (JSON, same shape as on the WebSocket) and
+  `alert`.
+- `extra_params.data` of an `-rtc` push is an RTC message: `offer` (with
+  `session_id`, `tag_id`, `device_id` and `session_description.sdp`),
   `rescind`, `terminate` (optional `error.code` / `error.message`).
 - So on EASYKIT the `BDIY-rtc` offer is sent **only to FCM tokens**, which
   explains bticino_intercom #72.
@@ -122,7 +125,7 @@ Firebase project of the app (`res/values/strings.xml`): project
 `1:514810499773:android:ed5e6854097137cb`, package `com.netatmo.camera`,
 signing cert SHA-1 `cdaf5d982a79b76743546599a87f7c45bac269d8`.
 
-Registration (`u10.d.d` / `u10.d.k`), JSON POST:
+Registration, JSON POST:
 
 ```json
 /api/addpushcontext  {"credentials":"{\"device_token\":\"<fcm token>\"}","device_version":"…","os_version":"…","type":"Android","app_version":"…","app_type":"app_camera"}
@@ -130,7 +133,7 @@ Registration (`u10.d.d` / `u10.d.k`), JSON POST:
 ```
 
 `app_version` in `addpushcontext` is the app **versionCode** (`500000030` for
-26.10.1.1, from `n40.a.b`), not the version name. With an old value such as
+26.10.1.1), not the version name. With an old value such as
 `4.1.1.3` the call still answers `{"status":"ok"}` but stores nothing: a later
 `droppushcontext` answers 406 `{"error":{"code":7,"message":"Nothing to drop"}}`.
 With `500000030` the drop answers `ok` **[verified]**.

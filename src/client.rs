@@ -61,7 +61,14 @@ pub fn redact(s: &str) -> String {
         match v {
             Value::Object(m) => {
                 for (k, x) in m.iter_mut() {
-                    if matches!(k.as_str(), "access_token" | "refresh_token" | "password" | "credential") {
+                    // Secrets, plus location and media links that would end
+                    // up in bug reports.
+                    if matches!(
+                        k.as_str(),
+                        "access_token" | "refresh_token" | "password" | "credential" | "credentials" | "device_token"
+                            | "coordinates" | "city" | "altitude" | "email" | "local_ipv4" | "url" | "snapshot_url"
+                            | "vignette_url" | "sdp"
+                    ) {
                         *x = Value::String("<redacted>".into());
                     } else {
                         walk(x);
@@ -190,7 +197,7 @@ impl Client {
         }
     }
 
-    /// Authenticated form-encoded POST (the app's `a40.a` parameter maps).
+    /// Authenticated form-encoded POST.
     pub fn post_form(&mut self, path: &str, form: &[(&str, String)]) -> Result<Value> {
         let mut retried = false;
         loop {
@@ -289,8 +296,8 @@ mod tests {
 
     #[test]
     fn redact_hides_tokens_recursively() {
-        let r = redact(r#"{"access_token":"x","body":{"refresh_token":"y","n":1}}"#);
-        assert!(!r.contains("\"x\"") && !r.contains("\"y\""));
+        let r = redact(r#"{"access_token":"x","body":{"refresh_token":"y","n":1,"homes":[{"city":"Roma","coordinates":[1,2]}]}}"#);
+        assert!(!r.contains("\"x\"") && !r.contains("\"y\"") && !r.contains("Roma") && !r.contains("[1,2]"));
         assert!(r.contains("\"n\":1"));
     }
 }

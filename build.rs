@@ -5,7 +5,7 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let mut res = winresource::WindowsResource::new();
         res.set_icon("assets/icons/bticino-easykit.ico");
-        res.set("ProductName", "BTicino EASYKIT");
+        res.set("ProductName", "Door entry for BTicino EASYKIT");
         res.set("FileDescription", "Unofficial BTicino EASYKIT client");
         if let Err(e) = res.compile() {
             println!("cargo:warning=icon not embedded: {e}");

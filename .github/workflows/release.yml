@@ -39,7 +39,7 @@ jobs:
           name=bticino-easykit-${GITHUB_REF_NAME}-linux-x86_64
           mkdir -p "$name/packaging/linux" "$name/assets"
           cp target/${{ matrix.target }}/release/bticino-easykit target/${{ matrix.target }}/release/bticino-easykit-gui "$name/"
-          cp LICENSE README.md README.it.md CHANGELOG.md install.sh "$name/"
+          cp LICENSE THIRD-PARTY-LICENSES.md README.md README.it.md CHANGELOG.md install.sh "$name/"
           cp packaging/linux/bticino-easykit.desktop "$name/packaging/linux/"
           cp -r assets/icons "$name/assets/"
           tar czf "$name.tar.gz" "$name"
@@ -50,7 +50,7 @@ jobs:
         run: |
           $name = "bticino-easykit-$env:GITHUB_REF_NAME-windows-x86_64"
           New-Item -ItemType Directory $name | Out-Null
-          Copy-Item target/${{ matrix.target }}/release/bticino-easykit.exe, target/${{ matrix.target }}/release/bticino-easykit-gui.exe, LICENSE, README.md, README.it.md, CHANGELOG.md $name
+          Copy-Item target/${{ matrix.target }}/release/bticino-easykit.exe, target/${{ matrix.target }}/release/bticino-easykit-gui.exe, LICENSE, THIRD-PARTY-LICENSES.md, README.md, README.it.md, CHANGELOG.md $name
           Compress-Archive -Path $name -DestinationPath "$name.zip"
           (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower() + "  $name.zip" | Out-File -Encoding ascii "$name.zip.sha256"
       - uses: actions/upload-artifact@v4

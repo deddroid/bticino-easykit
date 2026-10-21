@@ -36,7 +36,8 @@ impl Lang {
 
 /// `(key, english, italian)`.
 const TABLE: &[(&str, &str, &str)] = &[
-    ("app.title", "BTicino EASYKIT", "BTicino EASYKIT"),
+    ("app.title", "Door entry for BTicino EASYKIT", "Videocitofono per BTicino EASYKIT"),
+    ("app.short", "Door entry", "Videocitofono"),
     ("tab.home", "Home", "Home"),
     ("tab.live", "Live", "Live"),
     ("tab.events", "Calls", "Chiamate"),

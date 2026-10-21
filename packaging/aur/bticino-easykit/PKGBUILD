@@ -49,6 +49,6 @@ package() {
     install -Dm644 "assets/icons/bticino-easykit-$s.png" "$pkgdir/usr/share/icons/hicolor/${s}x${s}/apps/bticino-easykit.png"
   done
   install -Dm644 assets/icons/bticino-easykit.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/bticino-easykit.svg"
-  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 LICENSE THIRD-PARTY-LICENSES.md -t "$pkgdir/usr/share/licenses/$pkgname/"
   install -Dm644 README.md README.it.md CHANGELOG.md docs/PROTOCOL.md -t "$pkgdir/usr/share/doc/$pkgname/"
 }

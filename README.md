@@ -1,4 +1,4 @@
-# BTicino EASYKIT for Linux and Windows
+# Door entry for BTicino EASYKIT — Linux and Windows
 
 [Italiano](README.it.md)
 
@@ -7,8 +7,9 @@ video door entry kit (BTicino 310913, Legrand 360910). BTicino only offers the
 *Home + Security* phone app; this project brings the main features to Linux and
 Windows.
 
-> Not affiliated with BTicino, Legrand or Netatmo. It talks to the same cloud
-> service as the official app, with your own account.
+> Independent project, not affiliated with or endorsed by BTicino, Legrand or
+> Netatmo. It talks to the same cloud service as the official app, with your
+> own account and your own device. See [Legal notes](#legal-notes).
 
 ![Home](docs/screenshots/home-en.png)
 
@@ -92,7 +93,7 @@ Linux needs `alsa-lib` (`libasound2-dev`), `openssl` and `pkg-config`.
 
 ## Usage
 
-Start **BTicino EASYKIT** from the menu and sign in with your Home + Security
+Start **Door entry for BTicino EASYKIT** from the menu and sign in with your Home + Security
 account. The password is never stored: only the session tokens, in
 `~/.config/bticino-easykit/tokens.toml` (`%APPDATA%\bticino-easykit` on Windows).
 
@@ -148,6 +149,28 @@ How everything works is documented in [docs/PROTOCOL.md](docs/PROTOCOL.md).
   [unsafe-libopus](https://github.com/DCNick3/unsafe-libopus), [cpal](https://github.com/RustAudio/cpal).
 - Reverse engineering of the official app done with
   [REA](https://github.com/morluto/rea), JADX and Apktool.
+
+## Legal notes
+
+- **Trademarks.** BTicino, EASYKIT, Legrand, Netatmo and Home + Security are
+  trademarks of their respective owners. They are used here only to say which
+  hardware this software works with.
+- **How it was made.** The network protocol was learned by observing the
+  traffic of the user's own kit and by analysing the official Android app to
+  the extent needed for interoperability (EU Directive 2009/24/EC, art. 6;
+  Italian law 633/1941, art. 64-quater). No code, images or other material
+  from the official app is included. The OAuth and Firebase client
+  identifiers of the official app are used to talk to the same cloud
+  service; the client secret has been public in other open-source projects
+  for years.
+- **Use at your own risk.** Unofficial clients may not be allowed by Netatmo's
+  terms of service, and Netatmo can change or block the cloud API at any time,
+  which could also affect your account. This software opens doors and gates:
+  you are responsible for how you use it. It comes with no warranty (see the
+  license).
+- **Privacy.** Your password is never stored; tokens stay on your computer.
+  Debug logs hide tokens, location and image links.
+- Third-party licenses of the bundled crates: [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
 
 ## License
 

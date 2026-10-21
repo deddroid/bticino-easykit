@@ -2,9 +2,9 @@
 //!
 //! Two modes, as in the official app:
 //! - **live**: we send an offer on the signaling WebSocket (`/appws/`) and
-//!   the device answers (`p30.g`);
+//!   the device answers;
 //! - **answer**: the device rang and pushed its offer (`*-rtc`, over FCM on
-//!   EASYKIT); we answer it (`p30.i`).
+//!   EASYKIT); we answer it.
 //!
 //! The firmware stamps fixed payload types (Opus 111, H264 109), so the
 //! media engine registers exactly those. A local audio track sending Opus

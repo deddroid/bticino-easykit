@@ -1,4 +1,4 @@
-# BTicino EASYKIT per Linux e Windows
+# Videocitofono per BTicino EASYKIT — Linux e Windows
 
 [English](README.md)
 
@@ -7,8 +7,9 @@ App desktop e strumento a riga di comando, non ufficiali, per il videocitofono
 l'app per telefono *Home + Security*: questo progetto porta le funzioni
 principali su Linux e Windows.
 
-> Non affiliato a BTicino, Legrand o Netatmo. Usa lo stesso servizio cloud
-> dell'app ufficiale, con il tuo account.
+> Progetto indipendente, non affiliato né approvato da BTicino, Legrand o
+> Netatmo. Usa lo stesso servizio cloud dell'app ufficiale, con il tuo account
+> e il tuo dispositivo. Vedi [Note legali](#note-legali).
 
 ![Home](docs/screenshots/home-it.png)
 
@@ -92,7 +93,7 @@ Su Linux servono `alsa-lib` (`libasound2-dev`), `openssl` e `pkg-config`.
 
 ## Uso
 
-Avvia **BTicino EASYKIT** dal menu e accedi con il tuo account Home + Security.
+Avvia **Videocitofono per BTicino EASYKIT** dal menu e accedi con il tuo account Home + Security.
 La password non viene mai salvata: solo i token di sessione, in
 `~/.config/bticino-easykit/tokens.toml` (`%APPDATA%\bticino-easykit` su Windows).
 
@@ -149,6 +150,27 @@ Il funzionamento è documentato in [docs/PROTOCOL.md](docs/PROTOCOL.md) (in ingl
   [unsafe-libopus](https://github.com/DCNick3/unsafe-libopus), [cpal](https://github.com/RustAudio/cpal).
 - Reverse engineering dell'app ufficiale fatto con
   [REA](https://github.com/morluto/rea), JADX e Apktool.
+
+## Note legali
+
+- **Marchi.** BTicino, EASYKIT, Legrand, Netatmo e Home + Security sono marchi
+  dei rispettivi titolari. Qui sono usati solo per indicare con quale hardware
+  funziona questo software.
+- **Come è stato realizzato.** Il protocollo di rete è stato ricavato
+  osservando il traffico del kit dell'autore e analizzando l'app Android
+  ufficiale nei limiti necessari all'interoperabilità (Direttiva UE
+  2009/24/CE, art. 6; legge 633/1941, art. 64-quater). Non è incluso codice,
+  immagini o altro materiale dell'app ufficiale. Per parlare con lo stesso
+  servizio cloud si usano gli identificativi OAuth e Firebase dell'app
+  ufficiale; il client secret è pubblico da anni in altri progetti open source.
+- **Uso a tuo rischio.** I client non ufficiali potrebbero non essere ammessi
+  dai termini di servizio di Netatmo, che può cambiare o bloccare l'API cloud
+  in qualsiasi momento, con possibili effetti anche sul tuo account. Questo
+  software apre porte e cancelli: sei responsabile di come lo usi. Non è
+  fornita alcuna garanzia (vedi la licenza).
+- **Privacy.** La password non viene mai salvata; i token restano sul tuo
+  computer. I log di debug nascondono token, posizione e link alle immagini.
+- Licenze di terze parti dei crate inclusi: [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
 
 ## Licenza
 

@@ -27,16 +27,16 @@ pub const CLIENT_ID: &str = "na_client_android_welcome";
 pub const CLIENT_SECRET: &str = "8ab584d62ca2a77e37ccc6b2c7e4f29e";
 pub const SCOPE: &str = "security_scopes";
 pub const APP_VERSION: &str = "4.1.1.3";
-pub const BUILD_NUMBER: &str = "4401103";
 pub const APP_TYPE: &str = "app_camera";
-/// `versionCode` of Home + Security 26.10.1.1 (`n40.a.b`). `addpushcontext`
+/// `versionCode` of Home + Security 26.10.1.1. `addpushcontext`
 /// sends it as `app_version`; with an old value the call answers "ok" but
 /// nothing is stored (a later `droppushcontext` says "Nothing to drop").
 pub const APP_VERSION_CODE: &str = "500000030";
 
-/// User-Agent sent by the official app.
+/// Honest User-Agent: the API accepts it, so we do not pose as the
+/// official app. (The app sends `NetatmoApp(Security/v…) Android(…)`.)
 pub fn user_agent() -> String {
-    format!("NetatmoApp(Security/v{APP_VERSION}/{BUILD_NUMBER}) Android(13/Google/sdk_gphone64_arm64)")
+    format!("bticino-easykit/{} (+https://github.com/deddroid/bticino-easykit)", env!("CARGO_PKG_VERSION"))
 }
 
 /// Form fields for the password grant.
@@ -124,7 +124,6 @@ pub const ANDROID_CERT_SHA1: &str = "cdaf5d982a79b76743546599a87f7c45bac269d8";
 
 /// Registers an FCM token so the cloud sends call pushes (including the
 /// `BDIY-rtc` SDP offer, which never reaches the WebSocket) to this client.
-/// Mirrors `u10.d.d` in the official app.
 pub fn addpushcontext(fcm_token: &str, device_version: &str, os_version: &str) -> Value {
     json!({
         "credentials": json!({ "device_token": fcm_token }).to_string(),
@@ -136,7 +135,7 @@ pub fn addpushcontext(fcm_token: &str, device_version: &str, os_version: &str) -
     })
 }
 
-/// Undoes [`addpushcontext`] (`u10.d.k` in the official app).
+/// Undoes [`addpushcontext`].
 pub fn droppushcontext(fcm_token: &str) -> Value {
     json!({
         "credentials": json!({ "device_token": fcm_token }).to_string(),
@@ -163,7 +162,7 @@ pub fn turn_request() -> Value {
     json!({ "client_type": "user" })
 }
 
-/// First message on the signaling WebSocket (`p30.h` in the app).
+/// First message on the signaling WebSocket.
 pub fn signaling_subscribe(access_token: &str) -> Value {
     json!({
         "action": "subscribe",
@@ -183,7 +182,7 @@ pub struct RtcSession {
     pub correlation_id: String,
 }
 
-/// Live view offer (`p30.g`): `module_id` selects the external unit.
+/// Live view offer: `module_id` selects the external unit.
 pub fn rtc_offer(device_id: &str, correlation_id: &str, sdp: &str, module_id: Option<&str>) -> Value {
     let mut sd = json!({ "type": "call", "sdp": sdp });
     if let Some(m) = module_id {
@@ -208,12 +207,12 @@ fn rtc_in_session(s: &RtcSession, data: Value) -> Value {
     })
 }
 
-/// Answer to a device offer received as a `*-rtc` push (`p30.i`).
+/// Answer to a device offer received as a `*-rtc` push.
 pub fn rtc_answer(s: &RtcSession, sdp: &str) -> Value {
     rtc_in_session(s, json!({ "type": "answer", "session_description": { "type": "call", "sdp": sdp } }))
 }
 
-/// Trickle ICE candidate (`p30.n`).
+/// Trickle ICE candidate.
 pub fn rtc_candidate(s: &RtcSession, candidate: &str, sdp_m_line_index: u16) -> Value {
     rtc_in_session(
         s,
@@ -221,7 +220,7 @@ pub fn rtc_candidate(s: &RtcSession, candidate: &str, sdp_m_line_index: u16) -> 
     )
 }
 
-/// Hang up (`p30.k`).
+/// Hang up.
 pub fn rtc_terminate(s: &RtcSession) -> Value {
     rtc_in_session(s, json!({ "type": "terminate" }))
 }
@@ -246,11 +245,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn user_agent_matches_official_app() {
-        assert_eq!(
-            user_agent(),
-            "NetatmoApp(Security/v4.1.1.3/4401103) Android(13/Google/sdk_gphone64_arm64)"
-        );
+    fn user_agent_names_this_project() {
+        assert!(user_agent().starts_with("bticino-easykit/"));
     }
 
     #[test]

@@ -15,7 +15,7 @@ pub fn set(enabled: bool) -> std::io::Result<()> {
     std::fs::write(
         file,
         format!(
-            "[Desktop Entry]\nType=Application\nName=BTicino EASYKIT\nExec=\"{}\" --minimized\nIcon=bticino-easykit\nX-GNOME-Autostart-enabled=true\n",
+            "[Desktop Entry]\nType=Application\nName=Door entry for BTicino EASYKIT\nExec=\"{}\" --minimized\nIcon=bticino-easykit\nX-GNOME-Autostart-enabled=true\n",
             exe.display()
         ),
     )

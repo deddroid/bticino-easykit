@@ -318,7 +318,7 @@ impl eframe::App for App {
 
         egui::Panel::top("tabs").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.heading(t(lang, "app.title"));
+                ui.heading(t(lang, "app.short"));
                 ui.separator();
                 if logged_in == Some(true) {
                     for tab in Tab::ALL {

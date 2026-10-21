@@ -36,7 +36,7 @@ enum Cmd {
     },
     /// Open a door lock (by name or id); asks for confirmation unless --yes
     Open {
-        /// Lock name (e.g. "Cancello Pedonale") or module id; omit to list locks
+        /// Lock name (as shown by `open` without arguments) or module id
         lock: Option<String>,
         #[arg(long)]
         yes: bool,
