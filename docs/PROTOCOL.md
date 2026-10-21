@@ -129,6 +129,29 @@ Registration (`u10.d.d` / `u10.d.k`), JSON POST:
 
 Status: **[unverified]** until a ring is received with `bticino-easykit listen`.
 
+## WebRTC live view on EASYKIT (observed 2026-10-21)
+
+**[verified]** on the maintainer's kit (fw 1.00.11):
+
+- `offer` with `module_id` of the `BNEU` → ack with `session_id`/`tag_id`,
+  then `answer` (GStreamer webrtcbin: `msid user…@host-…`,
+  `webrtctransceiver`, `setup:active`, H264 PT 109 profile `42e01f`
+  15 fps with `sprop-parameter-sets`, Opus PT 111 `sprop-maxcapturerate=16000`).
+- The answer carries **no ICE candidates**, and the device never trickles any.
+- Client candidates sent before the answer are rejected with ack
+  `{"status":"error","error":{"code":13,"message":"Received ICE candidate before answer"}}`;
+  after the answer they are acked `ok`.
+- Without a working media path the device sends `terminate` ~30 s after the offer.
+- **Media works [verified]**: H264 640×480 ~15 fps + Opus 48 kHz, held for
+  the whole requested duration (no ~10 s cut-off). Requirements found the hard way:
+  1. The device's DTLS certificate has an RSA key < 2048 bits; webrtc-rs rejects
+     its CertificateVerify (`ErrKeySignatureMismatch`) unless
+     `allow_insecure_verification_algorithm` is set (fingerprint check unchanged).
+  2. With `SRTP_AEAD_AES_128_GCM` negotiated the handshake completes but the device
+     sends **no media at all**; offering only `SRTP_AES128_CM_HMAC_SHA1_80` fixes it.
+  3. The device is DTLS client (`setup:active`) and only ever sees peer-reflexive
+     candidates for us; on the LAN the selected pair is direct host↔device.
+
 ## WebRTC video/audio
 
 Signaling on `wss://app-ws.netatmo.net/appws/` (`app_type: app_security`),

@@ -27,6 +27,7 @@ use rtc::media::Sample;
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{MediaEngine, MIME_TYPE_H264, MIME_TYPE_OPUS};
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::transport::{RTCIceCandidateInit, RTCIceServer};
@@ -214,6 +215,21 @@ impl PeerConnectionEventHandler for Handler {
     }
 }
 
+/// DTLS/SRTP settings the EASYKIT needs:
+/// - its certificate has an RSA key under 2048 bits, which rtc-dtls rejects
+///   by default (`ErrKeySignatureMismatch` on CertificateVerify); the SDP
+///   fingerprint check stays enabled;
+/// - with `SRTP_AEAD_AES_128_GCM` negotiated (webrtc-rs's first choice) the
+///   handshake completes but the device never sends media, so only
+///   `SRTP_AES128_CM_HMAC_SHA1_80` is offered.
+fn setting_engine() -> rtc::peer_connection::configuration::setting_engine::SettingEngine {
+    use rtc::dtls::extension::extension_use_srtp::SrtpProtectionProfile as P;
+    SettingEngineBuilder::new()
+        .with_allow_insecure_verification_algorithm(true)
+        .with_srtp_protection_profiles(vec![P::Srtp_Aes128_Cm_Hmac_Sha1_80])
+        .build()
+}
+
 type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// Opens `/appws/` and subscribes.
@@ -289,6 +305,7 @@ pub async fn run(token: String, mode: Mode, opts: CallOptions, log: Log) -> crat
     let pc = PeerConnectionBuilder::new()
         .with_configuration(config)
         .with_media_engine(me)
+        .with_setting_engine(setting_engine())
         .with_interceptor_registry(registry)
         .with_handler(handler as Arc<dyn PeerConnectionEventHandler>)
         .with_runtime(runtime)
