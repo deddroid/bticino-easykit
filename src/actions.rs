@@ -64,6 +64,8 @@ pub enum Command {
     Unlock(String),
     Light(String, bool),
     StartLive,
+    /// Answer the ringing call (needs its `*-rtc` offer from FCM).
+    Answer,
     StopLive,
     /// Mute the external unit's audio on the speakers.
     Mute(bool),
@@ -83,6 +85,10 @@ pub enum Update {
     Frame(crate::video::RgbaFrame),
     LiveEnded(std::result::Result<CallReport, String>),
     Ring(Push),
+    /// The ringing call can be answered (its SDP offer arrived).
+    Offer,
+    /// The call was answered elsewhere or ended.
+    CallGone,
 }
 
 /// Owns the API client on its own thread; never blocks the caller.
@@ -136,6 +142,7 @@ fn run(rx: Receiver<Command>, out: Sender<Update>, wake: Arc<dyn Fn() + Send + S
     #[cfg(feature = "gui")]
     let mut audio: Option<Arc<crate::audio::Audio>> = None;
     let mut watching = false;
+    let offer: Arc<std::sync::Mutex<Option<Push>>> = Arc::default();
 
     ctx.send(Update::LoggedIn(client.is_logged_in()));
     let mut pending = if client.is_logged_in() { vec![Command::Refresh] } else { vec![] };
@@ -149,9 +156,9 @@ fn run(rx: Receiver<Command>, out: Sender<Update>, wake: Arc<dyn Fn() + Send + S
             },
         };
         let r: Result<()> = (|| {
-            match cmd {
+            match &cmd {
                 Command::Login { email, password } => {
-                    client.login(&email, &password)?;
+                    client.login(email, password)?;
                     ctx.send(Update::LoggedIn(true));
                     pending.push(Command::Refresh);
                 }
@@ -170,27 +177,37 @@ fn run(rx: Receiver<Command>, out: Sender<Update>, wake: Arc<dyn Fn() + Send + S
                     ctx.send(Update::Events(client.events(&h.id, 30)?));
                     if !watching {
                         watching = true;
-                        watch_rings(&rt, ctx.clone());
+                        let router = Arc::new(Router { ctx: ctx.clone(), offer: offer.clone(), seen: Default::default() });
+                        watch_rings(&rt, router.clone());
+                        watch_fcm(&mut client, router);
                     }
                     home = Some(h);
                 }
                 Command::Unlock(id) => {
                     let h = home.as_ref().ok_or_else(|| Error::Other("not loaded".into()))?;
-                    unlock(&mut client, h, &id)?;
-                    let name = h.module(&id).map(|m| m.name.clone()).unwrap_or(id);
+                    unlock(&mut client, h, id)?;
+                    let name = h.module(id).map(|m| m.name.clone()).unwrap_or_else(|| id.clone());
                     ctx.send(Update::Info(format!("unlock:{name}")));
                 }
                 Command::Light(id, on) => {
                     let h = home.as_ref().ok_or_else(|| Error::Other("not loaded".into()))?;
-                    light(&mut client, h, &id, on)?;
+                    light(&mut client, h, id, *on)?;
                     ctx.send(Update::Info(format!("light:{on}")));
                 }
-                Command::StartLive => {
+                Command::StartLive | Command::Answer => {
                     if let Some(s) = live_stop.take() {
                         s.notify_one();
                     }
                     let h = home.as_ref().ok_or_else(|| Error::Other("not loaded".into()))?;
-                    let mode = live_mode(h)?;
+                    let mode = if matches!(cmd, Command::Answer) {
+                        let p = offer.lock().unwrap().take().ok_or_else(|| Error::Other("no call to answer".into()))?;
+                        let session = p::session_from_push(&p.extra_params)
+                            .ok_or_else(|| Error::Other("offer without session ids".into()))?;
+                        let offer_sdp = p.extra_params["data"]["session_description"]["sdp"].as_str().unwrap_or_default().to_owned();
+                        Mode::Answer { session, offer_sdp }
+                    } else {
+                        live_mode(h)?
+                    };
                     let ice = call::ice_servers_from_turn(&client.turn()?);
                     let token = client.token()?;
                     let stop = Arc::new(Notify::new());
@@ -220,13 +237,13 @@ fn run(rx: Receiver<Command>, out: Sender<Update>, wake: Arc<dyn Fn() + Send + S
                 Command::Mute(_m) => {
                     #[cfg(feature = "gui")]
                     if let Some(a) = &audio {
-                        a.muted.store(_m, std::sync::atomic::Ordering::Relaxed);
+                        a.muted.store(*_m, std::sync::atomic::Ordering::Relaxed);
                     }
                 }
                 Command::Talk(_t) => {
                     #[cfg(feature = "gui")]
                     if let Some(a) = &audio {
-                        a.talking.store(_t, std::sync::atomic::Ordering::Relaxed);
+                        a.talking.store(*_t, std::sync::atomic::Ordering::Relaxed);
                     }
                 }
             }
@@ -238,8 +255,56 @@ fn run(rx: Receiver<Command>, out: Sender<Update>, wake: Arc<dyn Fn() + Send + S
     }
 }
 
+/// Turns pushes from either channel into UI updates: one `Ring` per call
+/// (WebSocket and FCM both report it), the answerable offer, and the end.
+struct Router {
+    ctx: Arc<Ctx>,
+    offer: Arc<std::sync::Mutex<Option<Push>>>,
+    seen: std::sync::Mutex<std::collections::VecDeque<String>>,
+}
+
+impl Router {
+    fn handle(&self, p: Push) {
+        let session = p.extra_params["session_id"].as_str().unwrap_or_default().to_owned();
+        let first_time = {
+            let mut seen = self.seen.lock().unwrap();
+            let new = !session.is_empty() && !seen.contains(&session);
+            if new {
+                seen.push_back(session.clone());
+                if seen.len() > 32 {
+                    seen.pop_front();
+                }
+            }
+            new
+        };
+        let kind = p.push_type.rsplit('-').next().unwrap_or_default().to_owned();
+        match (kind.as_str(), p.rtc_type()) {
+            ("rtc", Some("offer")) => {
+                *self.offer.lock().unwrap() = Some(p.clone());
+                if first_time {
+                    self.ctx.send(Update::Ring(p));
+                }
+                self.ctx.send(Update::Offer);
+            }
+            ("rtc", Some("rescind" | "terminate")) | ("missed_call" | "accepted_call", _) => self.end(&session),
+            ("incoming_call", _) if first_time => self.ctx.send(Update::Ring(p)),
+            _ => {}
+        }
+    }
+
+    fn end(&self, session: &str) {
+        let mut o = self.offer.lock().unwrap();
+        let same = o.as_ref().is_none_or(|p| p.extra_params["session_id"].as_str().unwrap_or_default() == session);
+        if same {
+            *o = None;
+            drop(o);
+            self.ctx.send(Update::CallGone);
+        }
+    }
+}
+
 /// Doorbell events from the push WebSocket.
-fn watch_rings(rt: &tokio::runtime::Runtime, ctx: Arc<Ctx>) {
+fn watch_rings(rt: &tokio::runtime::Runtime, router: Arc<Router>) {
     // The listener reads fresh tokens through its own client (they are
     // shared through tokens.toml); blocking HTTP stays off the async workers.
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Push>();
@@ -254,11 +319,27 @@ fn watch_rings(rt: &tokio::runtime::Runtime, ctx: Arc<Ctx>) {
     });
     rt.spawn(async move {
         while let Some(p) = rx.recv().await {
-            if p.push_type.ends_with("-incoming_call") {
-                ctx.send(Update::Ring(p));
-            }
+            router.handle(p);
         }
     });
+}
+
+/// Call pushes from FCM, the only channel that carries the `*-rtc` offer.
+fn watch_fcm(client: &mut Client, router: Arc<Router>) {
+    let (fcm, st, _) = match push::load_or_register() {
+        Ok(v) => v,
+        Err(e) => return log::warn!("FCM registration failed: {e}"),
+    };
+    if let Err(e) = push::add_push_context(client, &st.fcm_token) {
+        log::warn!("addpushcontext failed: {e}");
+    }
+    std::thread::Builder::new()
+        .name("easykit-fcm".into())
+        .spawn(move || {
+            let r = push::listen(fcm, move |p| router.handle(p));
+            log::warn!("FCM listener ended: {r:?}");
+        })
+        .ok();
 }
 
 fn start_live(
@@ -337,4 +418,49 @@ fn start_live(
         }
         ctx.send(Update::LiveEnded(r));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn push(push_type: &str, extra: serde_json::Value) -> Push {
+        Push { push_type: push_type.into(), extra_params: extra, fields: BTreeMap::new() }
+    }
+
+    fn kinds(rx: &Receiver<Update>) -> Vec<&'static str> {
+        rx.try_iter()
+            .map(|u| match u {
+                Update::Ring(_) => "ring",
+                Update::Offer => "offer",
+                Update::CallGone => "gone",
+                _ => "other",
+            })
+            .collect()
+    }
+
+    #[test]
+    fn router_dedupes_rings_and_tracks_the_offer() {
+        let (tx, rx) = channel();
+        let ctx = Arc::new(Ctx { out: tx, wake: Arc::new(|| {}) });
+        let r = Router { ctx, offer: Arc::default(), seen: Default::default() };
+        let s = serde_json::json!({"session_id": "s1"});
+        r.handle(push("BDIY-incoming_call", s.clone())); // WebSocket
+        r.handle(push("BDIY-incoming_call", s.clone())); // FCM, same call
+        r.handle(push("BDIY-rtc", serde_json::json!({"session_id": "s1", "data": {"type": "offer"}})));
+        assert_eq!(kinds(&rx), ["ring", "offer"]);
+        assert!(r.offer.lock().unwrap().is_some());
+        r.handle(push("BDIY-rtc", serde_json::json!({"session_id": "s1", "data": {"type": "rescind"}})));
+        assert_eq!(kinds(&rx), ["gone"]);
+        assert!(r.offer.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn offer_alone_also_rings() {
+        let (tx, rx) = channel();
+        let r = Router { ctx: Arc::new(Ctx { out: tx, wake: Arc::new(|| {}) }), offer: Arc::default(), seen: Default::default() };
+        r.handle(push("BDIY-rtc", serde_json::json!({"session_id": "s2", "data": {"type": "offer"}})));
+        assert_eq!(kinds(&rx), ["ring", "offer"]);
+    }
 }

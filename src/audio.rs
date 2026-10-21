@@ -149,7 +149,7 @@ impl Audio {
             return;
         }
         let Some(pcm) = self.decoder.lock().unwrap().as_mut().map(|d| d.decode(payload)) else { return };
-        let mono: Vec<f32> = pcm.chunks_exact(2).map(|s| (s[0] as f32 + s[1] as f32) / 65536.0).collect();
+        let mono: Vec<f32> = pcm.as_chunks::<2>().0.iter().map(|[l, r]| (*l as f32 + *r as f32) / 65536.0).collect();
         let rate = *self.out_rate.lock().unwrap();
         let mut out = Vec::with_capacity(mono.len() * rate as usize / RATE as usize + 1);
         Resampler::new(RATE, rate).process(&mono, &mut out);

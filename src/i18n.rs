@@ -74,6 +74,7 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("events.missed", "Missed", "Persa"),
     ("events.incoming", "Ringing", "Squillo"),
     ("ring.title", "Someone is at the door", "Qualcuno ha suonato"),
+    ("ring.answer", "Answer", "Rispondi"),
     ("settings.language", "Language", "Lingua"),
     ("settings.autostart", "Start with the system", "Avvia all'accensione"),
     ("settings.tray", "Keep running in the tray when closed", "Resta nell'area di notifica quando chiudi"),

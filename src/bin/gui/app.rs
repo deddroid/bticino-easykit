@@ -63,6 +63,7 @@ pub struct State {
     pub live_running: bool,
     pub frame: Option<(usize, usize, Vec<u8>, u64)>,
     pub ring: Option<(Value, Instant)>,
+    pub can_answer: bool,
     pub busy: bool,
 }
 
@@ -115,6 +116,11 @@ pub fn apply(state: &mut State, u: Update, lang: Lang) -> bool {
         Update::Ring(p) => {
             state.ring = Some((p.extra_params, Instant::now()));
             return true;
+        }
+        Update::Offer => state.can_answer = true,
+        Update::CallGone => {
+            state.can_answer = false;
+            state.ring = None;
         }
     }
     false
@@ -401,7 +407,10 @@ impl App {
 
     fn ring_banner(&mut self, ui: &mut egui::Ui) {
         let lang = self.lang();
-        let ring = self.shared.lock().unwrap().state.ring.clone();
+        let (ring, can_answer, home) = {
+            let s = self.shared.lock().unwrap();
+            (s.state.ring.clone(), s.state.can_answer, s.state.home.clone())
+        };
         if let Some((params, at)) = ring {
             if at.elapsed() > Duration::from_secs(60) {
                 return;
@@ -413,7 +422,27 @@ impl App {
                             ui.add(egui::Image::new(&tex).max_height(90.0));
                         }
                     }
-                    ui.label(RichText::new(t(lang, "ring.title")).size(20.0).color(Color32::WHITE));
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new(t(lang, "ring.title")).size(20.0).color(Color32::WHITE));
+                        ui.horizontal_wrapped(|ui| {
+                            if can_answer && ui.button(format!("📞 {}", t(lang, "ring.answer"))).clicked() {
+                                {
+                                    let mut s = self.shared.lock().unwrap();
+                                    s.state.can_answer = false;
+                                    s.state.live_running = true;
+                                    s.state.frame = None;
+                                }
+                                self.texture = None;
+                                self.tab = Tab::Live;
+                                self.send(Command::Answer);
+                            }
+                            for m in home.iter().flat_map(|h| h.by_kind(ModuleKind::DoorLock)) {
+                                if ui.button(format!("🔓 {}", m.name)).clicked() {
+                                    self.confirm = Some((m.id.clone(), m.name.clone()));
+                                }
+                            }
+                        });
+                    });
                 });
             });
             ui.add_space(8.0);
