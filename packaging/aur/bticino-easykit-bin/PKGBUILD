@@ -7,7 +7,7 @@ pkgdesc="Unofficial client for the BTicino EASYKIT WiFi video door entry kit (pr
 arch=('x86_64')
 url="https://github.com/deddroid/bticino-easykit"
 license=('MIT')
-depends=('alsa-lib' 'gcc-libs' 'glibc' 'hicolor-icon-theme' 'openssl')
+depends=('alsa-lib' 'gcc-libs' 'glibc' 'hicolor-icon-theme')
 provides=("$_pkgname=$pkgver")
 conflicts=("$_pkgname")
 options=('!lto' '!strip')
