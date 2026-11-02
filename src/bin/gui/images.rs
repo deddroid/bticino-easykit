@@ -119,6 +119,14 @@ pub fn archive(url: String, unix: i64, dir: PathBuf) {
     });
 }
 
+/// `~/…` instead of the full home path (shorter, and no user name in screenshots).
+pub fn display_path(p: &Path) -> String {
+    match dirs::home_dir().and_then(|h| p.strip_prefix(h).ok().map(Path::to_path_buf)) {
+        Some(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
+        None => p.display().to_string(),
+    }
+}
+
 pub fn open_folder(dir: &Path) {
     let _ = std::fs::create_dir_all(dir);
     #[cfg(windows)]

@@ -960,7 +960,7 @@ impl App {
             ui.checkbox(&mut self.settings.save_visitor_photos, t(lang, "settings.photos"));
             ui.horizontal(|ui| {
                 ui.label(theme::muted(t(lang, "settings.photos_dir")));
-                ui.label(Settings::photos_dir().display().to_string());
+                ui.label(images::display_path(&Settings::photos_dir()));
                 if ui.button(format!("📂  {}", t(lang, "events.open_folder"))).clicked() {
                     images::open_folder(&Settings::photos_dir());
                 }
