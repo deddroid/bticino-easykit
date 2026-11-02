@@ -17,6 +17,8 @@ Windows.
 |---|---|
 | ![Live](docs/screenshots/live-en.png) | ![Calls](docs/screenshots/calls-en.png) |
 
+![Photo viewer](docs/screenshots/viewer-en.png)
+
 ## Features
 
 - **Live view** of the entrance panel (H264 video) with **two-way audio**:
@@ -24,7 +26,9 @@ Windows.
 - **Open the door and the gate** (every lock of the kit), with a confirmation.
 - **Staircase light** on/off, including lights the phone app hides.
 - **Ring notifications** on the desktop with the visitor's snapshot.
-- **Call history** with thumbnails.
+- **Call history** with thumbnails: click to zoom, save the photo. Visitor
+  photos are also saved automatically when someone rings, and the live view
+  can take full-resolution photos (the cloud keeps only 148×83 snapshots).
 - Tray icon, start with the system, single instance, English and Italian.
 - A scriptable **CLI** for everything above.
 

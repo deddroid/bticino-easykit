@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-11-02
+
+### Added
+- Calls: click a photo to open a viewer with zoom (Ctrl + wheel, pinch,
+  −/+, Fit, 100%) and drag to move; save the photo or open its folder.
+- Visitor photos are saved automatically when someone rings (setting, on by
+  default) into `Pictures/BTicino EASYKIT`, because the cloud links expire.
+- Live: "Take photo" saves the current frame at full resolution (640×480).
+  The cloud only keeps 148×83 snapshots for the EASYKIT.
+
+### Changed
+- New look: dark theme with cards, icons in the tab bar, larger buttons,
+  status chips, toasts for messages, centred live controls.
+
 ## [0.1.1] - 2026-10-21
 
 ### Changed

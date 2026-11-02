@@ -1,6 +1,5 @@
 //! The egui application: Home, Live, Calls and Settings tabs.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -9,8 +8,10 @@ use bticino_easykit::actions::{Command, Update, Worker};
 use bticino_easykit::i18n::{t, tf, Lang};
 use bticino_easykit::settings::Settings;
 use bticino_easykit::{Home, ModuleKind};
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use serde_json::Value;
+
+use crate::{images, theme};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tab {
@@ -136,17 +137,24 @@ pub struct App {
     texture: Option<(egui::TextureHandle, u64)>,
     muted: bool,
     talking: bool,
-    vignettes: HashMap<String, VignetteState>,
-    vignette_tx: std::sync::mpsc::Sender<(String, Option<egui::ColorImage>)>,
-    vignette_rx: std::sync::mpsc::Receiver<(String, Option<egui::ColorImage>)>,
+    images: images::Cache,
+    viewer: Option<Viewer>,
+    toast: Option<(String, bool, Instant)>,
+    logo: Option<egui::TextureHandle>,
+    /// Width of the live control bar in the previous frame, to centre it.
+    bar_width: f32,
     shots: Option<Screenshots>,
     pub on_ring: OnRing,
 }
 
-enum VignetteState {
-    Loading,
-    Ready(egui::TextureHandle),
-    Failed,
+/// Full-size photo of a call, with zoom and save.
+struct Viewer {
+    url: String,
+    fallback: Option<String>,
+    time: i64,
+    title: String,
+    /// `None` = fit to the window.
+    zoom: Option<f32>,
 }
 
 /// `BTICINO_EASYKIT_SCREENSHOTS=<dir>`: shoot every tab in both languages, then quit.
@@ -161,9 +169,9 @@ struct Screenshots {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, shared: SharedRef, on_ring: OnRing) -> Self {
         crate::fonts::install(&cc.egui_ctx);
+        theme::apply(&cc.egui_ctx);
         shared.lock().unwrap().ctx = Some(cc.egui_ctx.clone());
         let settings = Settings::load();
-        let (vignette_tx, vignette_rx) = std::sync::mpsc::channel();
         let shots = std::env::var_os("BTICINO_EASYKIT_SCREENSHOTS").map(|d| Screenshots {
             dir: d.into(),
             plan: Lang::ALL.iter().flat_map(|l| Tab::ALL.iter().map(move |t| (*t, *l))).collect(),
@@ -171,6 +179,26 @@ impl App {
             pending: false,
             image: Arc::default(),
         });
+        let logo = image::load_from_memory(include_bytes!("../../../assets/icons/bticino-easykit-64.png")).ok().map(|i| {
+            let i = i.to_rgba8();
+            let img = egui::ColorImage::from_rgba_unmultiplied([i.width() as usize, i.height() as usize], i.as_raw());
+            cc.egui_ctx.load_texture("logo", img, egui::TextureOptions::LINEAR)
+        });
+        let mut images = images::Cache::default();
+        let mut viewer = None;
+        if std::env::var("BTICINO_EASYKIT_DEMO").is_ok_and(|v| v == "1") {
+            images.insert(&cc.egui_ctx, crate::demo::DEMO_PHOTO, &crate::demo::visitor_photo());
+        }
+        // `BTICINO_EASYKIT_DEMO_VIEWER=1`: open the photo viewer (screenshots).
+        if std::env::var("BTICINO_EASYKIT_DEMO_VIEWER").is_ok_and(|v| v == "1") {
+            viewer = Some(Viewer {
+                url: crate::demo::DEMO_PHOTO.into(),
+                fallback: None,
+                time: 1_792_600_574,
+                title: "Missed — 2026-10-21 17:36".into(),
+                zoom: None,
+            });
+        }
         Self {
             shared,
             settings,
@@ -181,9 +209,11 @@ impl App {
             texture: None,
             muted: false,
             talking: false,
-            vignettes: HashMap::new(),
-            vignette_tx,
-            vignette_rx,
+            images,
+            viewer,
+            toast: None,
+            logo,
+            bar_width: 0.0,
             shots,
             on_ring,
         }
@@ -208,9 +238,14 @@ impl App {
         }
     }
 
+    fn notify(&mut self, text: String, error: bool) {
+        self.toast = Some((text, error, Instant::now()));
+    }
+
     fn drain(&mut self, ctx: &egui::Context) {
         let lang = self.lang();
         let mut rings = Vec::new();
+        let mut message = None;
         {
             let mut s = self.shared.lock().unwrap();
             let updates: Vec<Update> = match &s.worker {
@@ -222,41 +257,24 @@ impl App {
                     rings.push(s.state.ring.as_ref().map(|r| r.0.clone()).unwrap_or_default());
                 }
             }
+            if let Some(m) = s.state.message.take() {
+                message = Some(m);
+            }
+        }
+        if let Some((m, err)) = message {
+            self.notify(m, err);
         }
         for r in rings {
             if self.settings.notify_on_ring {
                 (self.on_ring)(&r, lang);
             }
+            if self.settings.save_visitor_photos {
+                archive_ring(&r);
+            }
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             self.tab = Tab::Home;
         }
-        while let Ok((url, img)) = self.vignette_rx.try_recv() {
-            let v = match img {
-                Some(img) => VignetteState::Ready(ctx.load_texture(&url, img, egui::TextureOptions::LINEAR)),
-                None => VignetteState::Failed,
-            };
-            self.vignettes.insert(url, v);
-        }
-    }
-
-    fn vignette(&mut self, url: &str) -> Option<egui::TextureHandle> {
-        match self.vignettes.get(url) {
-            Some(VignetteState::Ready(t)) => Some(t.clone()),
-            Some(_) => None,
-            None => {
-                self.vignettes.insert(url.to_owned(), VignetteState::Loading);
-                let (tx, url) = (self.vignette_tx.clone(), url.to_owned());
-                let ctx = self.shared.lock().unwrap().ctx.clone();
-                std::thread::spawn(move || {
-                    let img = fetch_image(&url);
-                    let _ = tx.send((url, img));
-                    if let Some(c) = ctx {
-                        c.request_repaint();
-                    }
-                });
-                None
-            }
-        }
+        self.images.poll(ctx);
     }
 
     fn screenshots(&mut self, ctx: &egui::Context) {
@@ -295,10 +313,16 @@ impl App {
     }
 }
 
-fn fetch_image(url: &str) -> Option<egui::ColorImage> {
-    let bytes = reqwest::blocking::get(url).ok()?.bytes().ok()?;
-    let img = image::load_from_memory(&bytes).ok()?.to_rgba8();
-    Some(egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw()))
+/// Saves the snapshot of a ring (the cloud link expires) if one is attached.
+pub fn archive_ring(params: &Value) {
+    if let Some(url) = params["snapshot_url"].as_str().or(params["vignette_url"].as_str()) {
+        let time = params["timestamp"].as_i64().unwrap_or_else(now_unix);
+        images::archive(url.to_owned(), time, Settings::photos_dir());
+    }
+}
+
+fn now_unix() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
 impl eframe::App for App {
@@ -316,58 +340,73 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         let logged_in = self.shared.lock().unwrap().state.logged_in;
 
-        egui::Panel::top("tabs").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading(t(lang, "app.short"));
-                ui.separator();
-                if logged_in == Some(true) {
-                    for tab in Tab::ALL {
-                        ui.selectable_value(&mut self.tab, tab, t(lang, tab.key()));
+        egui::Panel::top("tabs")
+            .frame(egui::Frame::new().fill(theme::SURFACE).inner_margin(egui::Margin::symmetric(16, 10)))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if let Some(logo) = &self.logo {
+                        ui.add(egui::Image::new(logo).fit_to_exact_size(egui::vec2(28.0, 28.0)));
                     }
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if self.shared.lock().unwrap().state.busy {
-                        ui.spinner();
+                    ui.label(RichText::new(t(lang, "app.short")).size(19.0).strong());
+                    ui.add_space(18.0);
+                    if logged_in == Some(true) {
+                        for tab in Tab::ALL {
+                            let selected = self.tab == tab;
+                            let text = RichText::new(format!("{}  {}", tab.icon(), t(lang, tab.key())))
+                                .size(15.0)
+                                .color(if selected { egui::Color32::WHITE } else { theme::MUTED });
+                            let b = egui::Button::new(text)
+                                .fill(if selected { theme::ACCENT } else { egui::Color32::TRANSPARENT })
+                                .stroke(egui::Stroke::NONE)
+                                .corner_radius(egui::CornerRadius::same(255));
+                            if ui.add(b).clicked() {
+                                self.tab = tab;
+                            }
+                        }
                     }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if self.shared.lock().unwrap().state.busy {
+                            ui.spinner();
+                        }
+                    });
                 });
             });
-        });
 
-        egui::Panel::bottom("status").show(ui, |ui| {
-            let msg = self.shared.lock().unwrap().state.message.clone();
-            match msg {
-                Some((m, true)) => ui.colored_label(Color32::from_rgb(220, 80, 80), m),
-                Some((m, false)) => ui.label(m),
-                None => ui.label(""),
-            };
-        });
-
-        egui::CentralPanel::default().show(ui, |ui| match logged_in {
-            None => {
-                ui.spinner();
-            }
-            Some(false) => self.login(ui),
-            Some(true) => {
-                self.ring_banner(ui);
-                match self.tab {
-                    Tab::Home => self.home(ui),
-                    Tab::Live => self.live(ui),
-                    Tab::Events => self.events(ui),
-                    Tab::Settings => self.settings_tab(ui),
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(theme::BG).inner_margin(egui::Margin::same(18)))
+            .show(ui, |ui| match logged_in {
+                None => {
+                    ui.centered_and_justified(|ui| ui.spinner());
                 }
-            }
-        });
+                Some(false) => self.login(ui),
+                Some(true) => {
+                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                        self.ring_banner(ui);
+                        match self.tab {
+                            Tab::Home => self.home(ui),
+                            Tab::Live => self.live(ui),
+                            Tab::Events => self.events(ui),
+                            Tab::Settings => self.settings_tab(ui),
+                        }
+                    });
+                }
+            });
+
+        self.toast(&ctx);
+        self.viewer(&ctx);
 
         if let Some((id, name)) = self.confirm.clone() {
             let r = egui::Modal::new(egui::Id::unique("confirm-open")).show(&ctx, |ui| {
-                ui.label(RichText::new(tf(lang, "confirm.open", &name)).size(18.0));
-                ui.add_space(8.0);
+                ui.set_width(340.0);
+                ui.label(RichText::new("🔓").size(32.0));
+                ui.label(RichText::new(tf(lang, "confirm.open", &name)).size(18.0).strong());
+                ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    if ui.button(t(lang, "confirm.yes")).clicked() {
+                    if theme::big_button(ui, t(lang, "confirm.yes"), theme::OK).clicked() {
                         self.send(Command::Unlock(id.clone()));
                         self.confirm = None;
                     }
-                    if ui.button(t(lang, "confirm.no")).clicked() {
+                    if ui.add(egui::Button::new(t(lang, "confirm.no")).min_size(egui::vec2(0.0, 42.0))).clicked() {
                         self.confirm = None;
                     }
                 });
@@ -379,29 +418,71 @@ impl eframe::App for App {
     }
 }
 
+impl Tab {
+    fn icon(self) -> &'static str {
+        match self {
+            Tab::Home => "🏠",
+            Tab::Live => "📹",
+            Tab::Events => "📞",
+            Tab::Settings => "⚙",
+        }
+    }
+}
+
 impl App {
+    fn toast(&mut self, ctx: &egui::Context) {
+        let Some((text, error, at)) = self.toast.clone() else { return };
+        if at.elapsed() > Duration::from_secs(6) {
+            self.toast = None;
+            return;
+        }
+        egui::Area::new(egui::Id::unique("toast"))
+            .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -20.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(if error { theme::DANGER } else { theme::SURFACE_2 })
+                    .stroke(egui::Stroke::new(1.0, if error { theme::DANGER } else { theme::BORDER }))
+                    .corner_radius(egui::CornerRadius::same(12))
+                    .inner_margin(egui::Margin::symmetric(16, 10))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(text).color(egui::Color32::WHITE));
+                    });
+            });
+        ctx.request_repaint_after(Duration::from_millis(500));
+    }
+
     fn login(&mut self, ui: &mut egui::Ui) {
         let lang = self.lang();
-        ui.add_space(24.0);
         ui.vertical_centered(|ui| {
-            ui.heading(t(lang, "login.title"));
-            ui.add_space(12.0);
-            egui::Grid::new("login").num_columns(2).show(ui, |ui| {
-                ui.label(t(lang, "login.email"));
-                ui.text_edit_singleline(&mut self.email);
-                ui.end_row();
-                ui.label(t(lang, "login.password"));
-                let pw = ui.add(egui::TextEdit::singleline(&mut self.password).password(true));
-                ui.end_row();
+            ui.add_space(40.0);
+            ui.set_max_width(420.0);
+            theme::card(ui, None, |ui| {
+                ui.vertical_centered(|ui| {
+                    if let Some(logo) = &self.logo {
+                        ui.add(egui::Image::new(logo).fit_to_exact_size(egui::vec2(56.0, 56.0)));
+                    }
+                    ui.label(RichText::new(t(lang, "login.title")).size(18.0).strong());
+                });
+                ui.add_space(8.0);
+                ui.label(theme::muted(t(lang, "login.email")));
+                ui.add(egui::TextEdit::singleline(&mut self.email).desired_width(f32::INFINITY));
+                ui.label(theme::muted(t(lang, "login.password")));
+                let pw = ui.add(egui::TextEdit::singleline(&mut self.password).password(true).desired_width(f32::INFINITY));
                 let enter = pw.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                if (ui.button(t(lang, "login.button")).clicked() || enter) && !self.email.is_empty() {
+                ui.add_space(6.0);
+                let go = ui.add_sized(
+                    [ui.available_width(), 42.0],
+                    egui::Button::new(RichText::new(t(lang, "login.button")).size(16.0).strong().color(egui::Color32::WHITE))
+                        .fill(theme::ACCENT),
+                );
+                if (go.clicked() || enter) && !self.email.is_empty() {
                     let password = std::mem::take(&mut self.password);
                     self.send(Command::Login { email: self.email.trim().to_owned(), password });
                 }
-                ui.end_row();
+                ui.add_space(4.0);
+                ui.label(theme::muted(t(lang, "login.note")).size(12.0));
             });
-            ui.add_space(8.0);
-            ui.weak(t(lang, "login.note"));
         });
     }
 
@@ -411,21 +492,37 @@ impl App {
             let s = self.shared.lock().unwrap();
             (s.state.ring.clone(), s.state.can_answer, s.state.home.clone())
         };
-        if let Some((params, at)) = ring {
-            if at.elapsed() > Duration::from_secs(60) {
-                return;
-            }
-            egui::Frame::new().fill(Color32::from_rgb(46, 157, 91)).corner_radius(6.0).inner_margin(10.0).show(ui, |ui| {
+        let Some((params, at)) = ring else { return };
+        if at.elapsed() > Duration::from_secs(60) {
+            return;
+        }
+        egui::Frame::new()
+            .fill(theme::OK.gamma_multiply(0.15))
+            .stroke(egui::Stroke::new(2.0, theme::OK))
+            .corner_radius(egui::CornerRadius::same(14))
+            .inner_margin(egui::Margin::same(14))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    if let Some(url) = params["vignette_url"].as_str().or(params["snapshot_url"].as_str()) {
-                        if let Some(tex) = self.vignette(url) {
-                            ui.add(egui::Image::new(&tex).max_height(90.0));
+                    let thumb = params["vignette_url"].as_str().or(params["snapshot_url"].as_str());
+                    if let Some(url) = thumb {
+                        if let Some(tex) = self.images.texture(ui.ctx(), url) {
+                            let r = ui.add(egui::Image::new(&tex).max_height(110.0).corner_radius(10.0).sense(egui::Sense::click()));
+                            if r.on_hover_text(t(lang, "events.zoom")).clicked() {
+                                self.viewer = Some(Viewer {
+                                    url: params["snapshot_url"].as_str().unwrap_or(url).to_owned(),
+                                    fallback: Some(url.to_owned()),
+                                    time: params["timestamp"].as_i64().unwrap_or_else(now_unix),
+                                    title: t(lang, "ring.title").to_owned(),
+                                    zoom: None,
+                                });
+                            }
                         }
                     }
                     ui.vertical(|ui| {
-                        ui.label(RichText::new(t(lang, "ring.title")).size(20.0).color(Color32::WHITE));
+                        ui.label(RichText::new(format!("🔔  {}", t(lang, "ring.title"))).size(22.0).strong());
                         ui.horizontal_wrapped(|ui| {
-                            if can_answer && ui.button(format!("📞 {}", t(lang, "ring.answer"))).clicked() {
+                            if can_answer && theme::big_button(ui, format!("📞 {}", t(lang, "ring.answer")), theme::OK).clicked() {
                                 {
                                     let mut s = self.shared.lock().unwrap();
                                     s.state.can_answer = false;
@@ -437,7 +534,7 @@ impl App {
                                 self.send(Command::Answer);
                             }
                             for m in home.iter().flat_map(|h| h.by_kind(ModuleKind::DoorLock)) {
-                                if ui.button(format!("🔓 {}", m.name)).clicked() {
+                                if theme::big_button(ui, format!("🔓 {}", m.name), theme::ACCENT).clicked() {
                                     self.confirm = Some((m.id.clone(), m.name.clone()));
                                 }
                             }
@@ -445,9 +542,8 @@ impl App {
                     });
                 });
             });
-            ui.add_space(8.0);
-            ui.ctx().request_repaint_after(Duration::from_secs(1));
-        }
+        ui.add_space(12.0);
+        ui.ctx().request_repaint_after(Duration::from_secs(1));
     }
 
     fn home(&mut self, ui: &mut egui::Ui) {
@@ -462,53 +558,69 @@ impl App {
         };
         ui.horizontal(|ui| {
             ui.heading(&home.name);
-            if ui.button(format!("⟳ {}", t(lang, "refresh"))).clicked() {
-                self.send(Command::Refresh);
-            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(format!("⟳  {}", t(lang, "refresh"))).clicked() {
+                    self.send(Command::Refresh);
+                }
+            });
         });
+        ui.add_space(4.0);
+
         let mods = status["body"]["home"]["modules"].as_array().cloned().unwrap_or_default();
         if let Some(b) = home.bridge() {
             let st = mods.iter().find(|m| m["id"] == b.id.as_str()).cloned().unwrap_or_default();
             let online = st["reachable"].as_bool().unwrap_or(false);
-            egui::Grid::new("bridge").num_columns(2).show(ui, |ui| {
-                ui.label(&b.name);
-                ui.colored_label(
-                    if online { Color32::from_rgb(46, 157, 91) } else { Color32::from_rgb(220, 80, 80) },
-                    format!("● {}", t(lang, if online { "home.online" } else { "home.offline" })),
-                );
-                ui.end_row();
-                ui.label(t(lang, "home.firmware"));
-                ui.label(st["firmware_name"].as_str().unwrap_or("-"));
-                ui.end_row();
-                ui.label(t(lang, "home.wifi"));
-                ui.label(st["wifi_strength"].as_u64().map(|w| format!("{w}")).unwrap_or_else(|| "-".into()));
-                ui.end_row();
-            });
-        }
-        ui.add_space(12.0);
-        ui.heading(t(lang, "home.locks"));
-        for m in home.by_kind(ModuleKind::DoorLock) {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(&m.name).size(16.0));
-                if ui.add(egui::Button::new(RichText::new(format!("🔓 {}", t(lang, "home.open"))).size(16.0))).clicked() {
-                    self.confirm = Some((m.id.clone(), m.name.clone()));
-                }
-            });
-        }
-        if !lights.is_empty() {
-            ui.add_space(12.0);
-            ui.heading(t(lang, "home.light"));
-            for (id, name) in lights {
+            theme::card(ui, Some(t(lang, "home.intercom")), |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(&name);
-                    if ui.button(t(lang, "home.on")).clicked() {
-                        self.send(Command::Light(id.clone(), true));
-                    }
-                    if ui.button(t(lang, "home.off")).clicked() {
-                        self.send(Command::Light(id.clone(), false));
+                    ui.label(RichText::new(&b.name).size(17.0).strong());
+                    if online {
+                        theme::chip(ui, format!("●  {}", t(lang, "home.online")), theme::OK);
+                    } else {
+                        theme::chip(ui, format!("●  {}", t(lang, "home.offline")), theme::DANGER);
                     }
                 });
+                ui.horizontal(|ui| {
+                    ui.label(theme::muted(t(lang, "home.firmware")));
+                    ui.label(st["firmware_name"].as_str().unwrap_or("-"));
+                    ui.add_space(18.0);
+                    ui.label(theme::muted(t(lang, "home.wifi")));
+                    match st["wifi_strength"].as_u64() {
+                        Some(w) => ui.label(format!("{}  {}", wifi_bars(w), tf(lang, "home.signal", &w.to_string()))),
+                        None => ui.label("-"),
+                    };
+                });
+            });
+        }
+        ui.add_space(8.0);
+        theme::card(ui, Some(t(lang, "home.locks")), |ui| {
+            for m in home.by_kind(ModuleKind::DoorLock) {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(format!("🚪  {}", m.name)).size(17.0));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if theme::big_button(ui, format!("🔓  {}", t(lang, "home.open")), theme::ACCENT).clicked() {
+                            self.confirm = Some((m.id.clone(), m.name.clone()));
+                        }
+                    });
+                });
             }
+        });
+        if !lights.is_empty() {
+            ui.add_space(8.0);
+            theme::card(ui, Some(t(lang, "home.light")), |ui| {
+                for (id, name) in lights {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("💡  {name}")).size(17.0));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button(t(lang, "home.off")).clicked() {
+                                self.send(Command::Light(id.clone(), false));
+                            }
+                            if ui.button(t(lang, "home.on")).clicked() {
+                                self.send(Command::Light(id.clone(), true));
+                            }
+                        });
+                    });
+                }
+            });
         }
     }
 
@@ -518,47 +630,6 @@ impl App {
             let s = self.shared.lock().unwrap();
             (s.state.live_running, s.state.live_state.clone(), s.state.frame.clone())
         };
-        ui.horizontal(|ui| {
-            if running {
-                if ui.button(format!("■ {}", t(lang, "live.stop"))).clicked() {
-                    self.send(Command::StopLive);
-                }
-            } else if ui.button(format!("▶ {}", t(lang, "live.start"))).clicked() {
-                let mut s = self.shared.lock().unwrap();
-                s.state.live_running = true;
-                s.state.frame = None;
-                drop(s);
-                self.texture = None;
-                self.send(Command::StartLive);
-            }
-            if running && state != "connected" {
-                ui.spinner();
-                ui.label(t(lang, "live.connecting"));
-            } else if !running {
-                ui.label(&state);
-            }
-            if running {
-                ui.separator();
-                if ui.toggle_value(&mut self.muted, format!("🔇 {}", t(lang, "live.mute"))).changed() {
-                    self.send_quiet(Command::Mute(self.muted));
-                }
-                // One click opens the microphone, another closes it.
-                let label = if self.talking { t(lang, "live.mic_on") } else { t(lang, "live.talk") };
-                let mut text = RichText::new(format!("🎤 {label}"));
-                if self.talking {
-                    text = text.color(Color32::from_rgb(220, 80, 80)).strong();
-                }
-                let mic = egui::Button::new(text).selected(self.talking);
-                if ui.add(mic).clicked() {
-                    self.talking = !self.talking;
-                    self.send_quiet(Command::Talk(self.talking));
-                }
-            } else {
-                // Every call starts with the microphone closed and audio on.
-                self.talking = false;
-                self.muted = false;
-            }
-        });
         if let Some((w, h, rgba, n)) = frame {
             if self.texture.as_ref().map(|t| t.1) != Some(n) {
                 let img = egui::ColorImage::from_rgba_unmultiplied([w, h], &rgba);
@@ -571,9 +642,82 @@ impl App {
                 }
             }
         }
-        if let Some((tex, _)) = &self.texture {
-            ui.add(egui::Image::new(tex).max_width(ui.available_width()).max_height(ui.available_height()).maintain_aspect_ratio(true));
-        }
+
+        // Video area: 4:3, as large as the window allows.
+        let avail = ui.available_size();
+        let w = avail.x.min((avail.y - 80.0).max(200.0) * 4.0 / 3.0);
+        let size = egui::vec2(w, w * 3.0 / 4.0);
+        ui.vertical_centered(|ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::BLACK)
+                .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                .corner_radius(egui::CornerRadius::same(14))
+                .show(ui, |ui| {
+                    ui.set_min_size(size);
+                    ui.set_max_size(size);
+                    match (&self.texture, running) {
+                        (Some((tex, _)), true) => {
+                            ui.add(egui::Image::new(tex).fit_to_exact_size(size).corner_radius(14.0));
+                        }
+                        _ => {
+                            ui.centered_and_justified(|ui| {
+                                if running {
+                                    ui.label(RichText::new(format!("⏳  {}", t(lang, "live.connecting"))).size(18.0).color(theme::MUTED));
+                                } else {
+                                    let msg = if state.is_empty() { t(lang, "live.idle").to_owned() } else { state.clone() };
+                                    ui.label(RichText::new(format!("📹\n\n{msg}")).size(17.0).color(theme::MUTED));
+                                }
+                            });
+                        }
+                    }
+                });
+            ui.add_space(10.0);
+            let bar = ui.horizontal(|ui| {
+                // Centre the control bar using last frame's width.
+                ui.add_space(((ui.available_width() - self.bar_width) / 2.0).max(0.0));
+                let start = ui.cursor().min.x;
+                if running {
+                    if theme::big_button(ui, format!("■  {}", t(lang, "live.stop")), theme::DANGER).clicked() {
+                        self.send(Command::StopLive);
+                    }
+                    let mute = if self.muted { theme::WARN } else { theme::SURFACE_2 };
+                    if theme::big_button(ui, format!("🔇  {}", t(lang, "live.mute")), mute).clicked() {
+                        self.muted = !self.muted;
+                        self.send_quiet(Command::Mute(self.muted));
+                    }
+                    if theme::big_button(ui, format!("📸  {}", t(lang, "live.snapshot")), theme::ACCENT).clicked() {
+                        self.save_live_frame();
+                    }
+                    // One click opens the microphone, another closes it.
+                    let (label, color) = if self.talking {
+                        (t(lang, "live.mic_on"), theme::DANGER)
+                    } else {
+                        (t(lang, "live.talk"), theme::SURFACE_2)
+                    };
+                    if theme::big_button(ui, format!("🎤  {label}"), color).clicked() {
+                        self.talking = !self.talking;
+                        self.send_quiet(Command::Talk(self.talking));
+                    }
+                } else {
+                    // Every call starts with the microphone closed and audio on.
+                    self.talking = false;
+                    self.muted = false;
+                    if theme::big_button(ui, format!("▶  {}", t(lang, "live.start")), theme::OK).clicked() {
+                        let mut s = self.shared.lock().unwrap();
+                        s.state.live_running = true;
+                        s.state.frame = None;
+                        drop(s);
+                        self.texture = None;
+                        self.send(Command::StartLive);
+                    }
+                }
+                ui.cursor().min.x - start
+            });
+            if (bar.inner - self.bar_width).abs() > 1.0 {
+                self.bar_width = bar.inner;
+                ui.ctx().request_repaint();
+            }
+        });
     }
 
     fn events(&mut self, ui: &mut egui::Ui) {
@@ -581,66 +725,257 @@ impl App {
         let events = self.shared.lock().unwrap().state.events.clone();
         let list = events["body"]["home"]["events"].as_array().cloned().unwrap_or_default();
         let calls: Vec<&Value> = list.iter().filter(|e| e["type"] == "outdoor").collect();
+        ui.horizontal(|ui| {
+            ui.heading(t(lang, "tab.events"));
+            ui.label(theme::muted(tf(lang, "events.count", &calls.len().to_string())));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(format!("⟳  {}", t(lang, "refresh"))).clicked() {
+                    self.send(Command::Refresh);
+                }
+                if ui.button(format!("📂  {}", t(lang, "events.open_folder"))).clicked() {
+                    images::open_folder(&Settings::photos_dir());
+                }
+            });
+        });
         if calls.is_empty() {
-            ui.label(t(lang, "events.empty"));
+            theme::card(ui, None, |ui| ui.label(theme::muted(t(lang, "events.empty"))));
             return;
         }
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for e in calls {
-                let sub = &e["subevents"][0];
-                let kind = match sub["type"].as_str() {
-                    Some("accepted_call") => t(lang, "events.accepted"),
-                    Some("missed_call") => t(lang, "events.missed"),
-                    _ => t(lang, "events.incoming"),
-                };
+        let ctx = ui.ctx().clone();
+        for e in calls {
+            let sub = &e["subevents"][0];
+            let (kind, color) = match sub["type"].as_str() {
+                Some("accepted_call") => (t(lang, "events.accepted"), theme::OK),
+                Some("missed_call") => (t(lang, "events.missed"), theme::DANGER),
+                _ => (t(lang, "events.incoming"), theme::WARN),
+            };
+            let time = e["time"].as_i64().unwrap_or(0);
+            let vignette = sub["vignette"]["url"].as_str().map(str::to_owned);
+            let snapshot = sub["snapshot"]["url"].as_str().map(str::to_owned);
+            theme::card(ui, None, |ui| {
                 ui.horizontal(|ui| {
-                    if let Some(url) = sub["vignette"]["url"].as_str() {
-                        match self.vignette(url) {
-                            Some(tex) => ui.add(egui::Image::new(&tex).max_height(72.0)),
-                            None => ui.add_sized([96.0, 72.0], egui::Spinner::new()),
-                        };
+                    let thumb = egui::vec2(128.0, 96.0);
+                    let mut open = false;
+                    match vignette.as_deref().or(snapshot.as_deref()) {
+                        Some(url) => match self.images.texture(&ctx, url) {
+                            Some(tex) => {
+                                let r = ui.add(egui::Image::new(&tex).fit_to_exact_size(thumb).corner_radius(10.0).sense(egui::Sense::click()));
+                                open |= r.on_hover_text(t(lang, "events.zoom")).clicked();
+                            }
+                            None => {
+                                ui.add_sized(thumb, egui::Spinner::new());
+                            }
+                        },
+                        None => {
+                            ui.add_sized(thumb, egui::Label::new(RichText::new("👤").size(40.0).color(theme::MUTED)));
+                        }
                     }
                     ui.vertical(|ui| {
-                        ui.label(RichText::new(kind).strong());
-                        ui.label(format_time(e["time"].as_i64().unwrap_or(0)));
-                        ui.weak(sub["message"].as_str().unwrap_or(""));
+                        ui.horizontal(|ui| {
+                            theme::chip(ui, kind, color);
+                            ui.label(RichText::new(format_time(time)).size(16.0).strong());
+                        });
+                        ui.label(theme::muted(sub["message"].as_str().unwrap_or("")));
+                        if snapshot.is_some() || vignette.is_some() {
+                            ui.horizontal(|ui| {
+                                open |= ui.button(format!("🔍  {}", t(lang, "events.zoom"))).clicked();
+                                if ui.button(format!("💾  {}", t(lang, "events.save"))).clicked() {
+                                    let url = snapshot.clone().or(vignette.clone()).unwrap_or_default();
+                                    self.save_photo(&url, time);
+                                }
+                            });
+                        }
                     });
+                    if open {
+                        self.viewer = Some(Viewer {
+                            url: snapshot.clone().or(vignette.clone()).unwrap_or_default(),
+                            fallback: vignette.clone(),
+                            time,
+                            title: format!("{kind} — {}", format_time(time)),
+                            zoom: None,
+                        });
+                    }
                 });
-                ui.separator();
+            });
+            ui.add_space(6.0);
+        }
+    }
+
+    /// Saves the current live frame at full resolution (640×480 on the
+    /// EASYKIT, while cloud snapshots are only 148×83).
+    fn save_live_frame(&mut self) {
+        let lang = self.lang();
+        let frame = self.shared.lock().unwrap().state.frame.clone();
+        let Some((w, h, rgba, _)) = frame else { return };
+        let Some(img) = image::RgbaImage::from_raw(w as u32, h as u32, rgba) else { return };
+        let mut png = Vec::new();
+        let r = img
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .map_err(|e| e.to_string())
+            .and_then(|_| images::save(&Settings::photos_dir(), now_unix(), &png).map_err(|e| e.to_string()));
+        match r {
+            Ok(p) => self.notify(tf(lang, "events.saved", &p.display().to_string()), false),
+            Err(e) => self.notify(tf(lang, "error", &e), true),
+        }
+    }
+
+    /// Saves the full-size photo (downloading it first if needed).
+    fn save_photo(&mut self, url: &str, time: i64) {
+        let lang = self.lang();
+        if let Some(bytes) = self.images.bytes(url) {
+            let r = images::save(&Settings::photos_dir(), time, bytes);
+            match r {
+                Ok(p) => self.notify(tf(lang, "events.saved", &p.display().to_string()), false),
+                Err(e) => self.notify(tf(lang, "error", &e.to_string()), true),
+            }
+            return;
+        }
+        // Not downloaded yet: fetch and save in the background.
+        let (url, dir) = (url.to_owned(), Settings::photos_dir());
+        let shared = self.shared.clone();
+        std::thread::spawn(move || {
+            let msg = match images::download(&url) {
+                Some(b) => match images::save(&dir, time, &b) {
+                    Ok(p) => (tf(lang, "events.saved", &p.display().to_string()), false),
+                    Err(e) => (tf(lang, "error", &e.to_string()), true),
+                },
+                None => (t(lang, "events.expired").to_owned(), true),
+            };
+            let mut s = shared.lock().unwrap();
+            s.state.message = Some(msg);
+            if let Some(c) = &s.ctx {
+                c.request_repaint();
             }
         });
+    }
+
+    fn viewer(&mut self, ctx: &egui::Context) {
+        let lang = self.lang();
+        let Some(v) = &self.viewer else { return };
+        let (url, fallback, time, title) = (v.url.clone(), v.fallback.clone(), v.time, v.title.clone());
+        let mut zoom = v.zoom;
+        let mut open = true;
+        let mut save = false;
+        let screen = ctx.content_rect().size();
+        egui::Window::new(title)
+            .id(egui::Id::unique("photo-viewer"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_size(screen * 0.85)
+            .max_size(screen * 0.95)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                // Prefer the full-size snapshot; fall back to the thumbnail.
+                let tex = match self.images.get(ctx, &url) {
+                    images::Slot::Ready { tex, .. } => Some(tex.clone()),
+                    images::Slot::Failed => fallback.as_deref().and_then(|f| self.images.texture(ctx, f)),
+                    images::Slot::Loading => None,
+                };
+                // Zoom buttons act on the current scale, applied below.
+                let mut step = 1.0f32;
+                let mut fit_now = false;
+                let mut actual = false;
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("−").clicked() {
+                        step = 1.0 / 1.25;
+                    }
+                    if ui.button("+").clicked() {
+                        step = 1.25;
+                    }
+                    fit_now = ui.button(t(lang, "viewer.fit")).clicked();
+                    actual = ui.button("100%").clicked();
+                    ui.separator();
+                    save = ui.button(format!("💾  {}", t(lang, "events.save"))).clicked();
+                    if ui.button(format!("📂  {}", t(lang, "events.open_folder"))).clicked() {
+                        images::open_folder(&Settings::photos_dir());
+                    }
+                });
+                ui.label(theme::muted(t(lang, "viewer.hint")).size(12.0));
+                let Some(tex) = tex else {
+                    ui.centered_and_justified(|ui| ui.spinner());
+                    return;
+                };
+                let img = tex.size_vec2();
+                let area = ui.available_size();
+                let fit = (area.x / img.x).min(area.y / img.y).max(0.05);
+                let mut scale = zoom.unwrap_or(fit);
+                if fit_now {
+                    zoom = None;
+                    scale = fit;
+                } else if actual {
+                    scale = 1.0;
+                    zoom = Some(scale);
+                } else if step != 1.0 {
+                    scale = (scale * step).clamp(0.05, 8.0);
+                    zoom = Some(scale);
+                }
+                // Ctrl + wheel / pinch.
+                let z = ui.input(|i| i.zoom_delta());
+                if z != 1.0 && ui.rect_contains_pointer(ui.max_rect()) {
+                    scale = (scale * z).clamp(0.05, 8.0);
+                    zoom = Some(scale);
+                }
+                egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+                    let size = img * scale;
+                    let pad = ((area - size) / 2.0).max(egui::Vec2::ZERO);
+                    ui.add_space(pad.y);
+                    ui.horizontal(|ui| {
+                        ui.add_space(pad.x);
+                        let r = ui.add(egui::Image::new(&tex).fit_to_exact_size(size).sense(egui::Sense::drag()));
+                        if r.dragged() {
+                            ui.scroll_with_delta(r.drag_delta());
+                        }
+                    });
+                });
+            });
+        if save {
+            self.save_photo(&url, time);
+        }
+        match (&mut self.viewer, open) {
+            (Some(v), true) => v.zoom = zoom,
+            _ => self.viewer = None,
+        }
     }
 
     fn settings_tab(&mut self, ui: &mut egui::Ui) {
         let lang = self.lang();
         let before = self.settings.clone();
-        egui::Grid::new("settings").num_columns(2).spacing([16.0, 10.0]).show(ui, |ui| {
-            ui.label(t(lang, "settings.language"));
-            egui::ComboBox::from_id_salt("lang").selected_text(self.settings.lang.name()).show_ui(ui, |ui| {
-                for l in Lang::ALL {
-                    ui.selectable_value(&mut self.settings.lang, l, l.name());
+        ui.heading(t(lang, "tab.settings"));
+        theme::card(ui, Some(t(lang, "settings.app")), |ui| {
+            ui.horizontal(|ui| {
+                ui.label(t(lang, "settings.language"));
+                egui::ComboBox::from_id_salt("lang").selected_text(self.settings.lang.name()).show_ui(ui, |ui| {
+                    for l in Lang::ALL {
+                        ui.selectable_value(&mut self.settings.lang, l, l.name());
+                    }
+                });
+            });
+            ui.checkbox(&mut self.settings.autostart, t(lang, "settings.autostart"));
+            ui.checkbox(&mut self.settings.tray, t(lang, "settings.tray"));
+        });
+        ui.add_space(8.0);
+        theme::card(ui, Some(t(lang, "settings.privacy")), |ui| {
+            ui.checkbox(&mut self.settings.notify_on_ring, t(lang, "settings.notify"));
+            ui.checkbox(&mut self.settings.save_visitor_photos, t(lang, "settings.photos"));
+            ui.horizontal(|ui| {
+                ui.label(theme::muted(t(lang, "settings.photos_dir")));
+                ui.label(Settings::photos_dir().display().to_string());
+                if ui.button(format!("📂  {}", t(lang, "events.open_folder"))).clicked() {
+                    images::open_folder(&Settings::photos_dir());
                 }
             });
-            ui.end_row();
-            ui.label("");
-            ui.checkbox(&mut self.settings.autostart, t(lang, "settings.autostart"));
-            ui.end_row();
-            ui.label("");
-            ui.checkbox(&mut self.settings.tray, t(lang, "settings.tray"));
-            ui.end_row();
-            ui.label("");
-            ui.checkbox(&mut self.settings.notify_on_ring, t(lang, "settings.notify"));
-            ui.end_row();
-            ui.label(t(lang, "settings.account"));
-            if ui.button(t(lang, "logout")).clicked() {
+        });
+        ui.add_space(8.0);
+        theme::card(ui, Some(t(lang, "settings.account")), |ui| {
+            if ui.button(format!("⎋  {}", t(lang, "logout"))).clicked() {
                 self.send(Command::Logout);
             }
-            ui.end_row();
         });
         if self.settings != before && self.shots.is_none() {
             if self.settings.autostart != before.autostart {
                 if let Err(e) = crate::autostart::set(self.settings.autostart) {
-                    self.shared.lock().unwrap().state.message = Some((tf(lang, "error", &e.to_string()), true));
+                    self.notify(tf(lang, "error", &e.to_string()), true);
                 }
             }
             let _ = self.settings.save();
@@ -648,10 +983,19 @@ impl App {
     }
 }
 
-/// Local time `YYYY-MM-DD HH:MM` without pulling a time-zone crate.
-fn format_time(unix: i64) -> String {
-    let offset = local_offset_secs();
-    let secs = unix + offset;
+/// ▂▄▆█ from the Wi-Fi strength (0-100).
+fn wifi_bars(strength: u64) -> &'static str {
+    match strength {
+        0..=25 => "▂",
+        26..=50 => "▂▄",
+        51..=75 => "▂▄▆",
+        _ => "▂▄▆█",
+    }
+}
+
+/// Local `(year, month, day, hour, minute, second)` without a time-zone crate.
+pub fn civil(unix: i64) -> (i64, i64, i64, i64, i64, i64) {
+    let secs = unix + local_offset_secs();
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);
     // Civil-from-days (Howard Hinnant).
@@ -665,7 +1009,13 @@ fn format_time(unix: i64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}", rem / 3600, rem % 3600 / 60)
+    (y, m, d, rem / 3600, rem % 3600 / 60, rem % 60)
+}
+
+/// Local time `YYYY-MM-DD HH:MM`.
+fn format_time(unix: i64) -> String {
+    let (y, m, d, h, mi, _) = civil(unix);
+    format!("{y:04}-{m:02}-{d:02} {h:02}:{mi:02}")
 }
 
 fn local_offset_secs() -> i64 {

@@ -10,7 +10,9 @@ mod app;
 mod autostart;
 mod demo;
 mod fonts;
+mod images;
 mod single;
+mod theme;
 mod tray;
 
 use std::sync::mpsc::channel;

@@ -5,6 +5,25 @@ use serde_json::json;
 
 use crate::app::State;
 
+/// Fake photo URL served from the cache in demo mode.
+pub const DEMO_PHOTO: &str = "demo://visitor";
+
+/// A synthetic "visitor": silhouette on a gradient (no real person).
+pub fn visitor_photo() -> image::RgbaImage {
+    let (w, h) = (640u32, 480u32);
+    image::RgbaImage::from_fn(w, h, |x, y| {
+        let (fx, fy) = (x as f32, y as f32);
+        let head = ((fx - 320.0).powi(2) + (fy - 170.0).powi(2)).sqrt() < 70.0;
+        let body = fy > 250.0 && (fx - 320.0).abs() < 150.0 - (fy - 250.0) * -0.25;
+        if head || body {
+            image::Rgba([40, 46, 56, 255])
+        } else {
+            let t = fy / h as f32;
+            image::Rgba([(120.0 + 60.0 * t) as u8, (150.0 + 40.0 * t) as u8, (180.0 - 20.0 * t) as u8, 255])
+        }
+    })
+}
+
 pub fn state() -> State {
     let topo = json!({"body": {"homes": [{
         "id": "demo", "name": "Demo home", "timezone": "Europe/Rome",
@@ -18,7 +37,8 @@ pub fn state() -> State {
         {"id": "00:03:50:00:00:01", "reachable": true, "firmware_name": "1.00.11", "wifi_strength": 48}
     ]}}});
     let call = |time: i64, kind: &str, msg: &str| {
-        json!({"type": "outdoor", "time": time, "subevents": [{"type": kind, "message": msg}]})
+        json!({"type": "outdoor", "time": time, "subevents": [{"type": kind, "message": msg,
+            "vignette": {"url": DEMO_PHOTO}, "snapshot": {"url": DEMO_PHOTO}}]})
     };
     let events = json!({"body": {"home": {"events": [
         call(1792600574, "missed_call", "Missed call"),
