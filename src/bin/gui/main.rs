@@ -10,7 +10,9 @@ mod app;
 mod autostart;
 mod demo;
 mod fonts;
+mod images;
 mod single;
+mod theme;
 mod tray;
 
 use std::sync::mpsc::channel;
@@ -125,8 +127,12 @@ fn main() {
             for u in updates {
                 if app::apply(&mut g.state, u, lang) {
                     let p = g.state.ring.as_ref().map(|r| r.0.clone()).unwrap_or_default();
-                    if Settings::load().notify_on_ring {
+                    let settings = Settings::load();
+                    if settings.notify_on_ring {
                         notify_ring(&p, lang);
+                    }
+                    if settings.save_visitor_photos {
+                        app::archive_ring(&p);
                     }
                     hidden = false;
                 }

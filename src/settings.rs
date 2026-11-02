@@ -16,11 +16,13 @@ pub struct Settings {
     pub autostart: bool,
     pub tray: bool,
     pub notify_on_ring: bool,
+    /// Keep a copy of every visitor's photo: the cloud links expire.
+    pub save_visitor_photos: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { lang: Lang::from_env(), autostart: false, tray: true, notify_on_ring: true }
+        Self { lang: Lang::from_env(), autostart: false, tray: true, notify_on_ring: true, save_visitor_photos: true }
     }
 }
 
@@ -31,6 +33,14 @@ impl Settings {
 
     pub fn load() -> Self {
         std::fs::read_to_string(Self::path()).ok().and_then(|s| toml::from_str(&s).ok()).unwrap_or_default()
+    }
+
+    /// Where visitor photos are saved: `<Pictures>/BTicino EASYKIT`.
+    pub fn photos_dir() -> PathBuf {
+        dirs::picture_dir()
+            .or_else(dirs::home_dir)
+            .unwrap_or_else(|| ".".into())
+            .join("BTicino EASYKIT")
     }
 
     pub fn save(&self) -> std::io::Result<()> {
@@ -48,12 +58,12 @@ mod tests {
     fn missing_fields_use_defaults() {
         let s: Settings = toml::from_str("lang = \"it\"").unwrap();
         assert_eq!(s.lang, Lang::It);
-        assert!(s.tray && s.notify_on_ring && !s.autostart);
+        assert!(s.tray && s.notify_on_ring && s.save_visitor_photos && !s.autostart);
     }
 
     #[test]
     fn roundtrip() {
-        let s = Settings { lang: Lang::En, autostart: true, tray: false, notify_on_ring: false };
+        let s = Settings { lang: Lang::En, autostart: true, tray: false, notify_on_ring: false, save_visitor_photos: false };
         let back: Settings = toml::from_str(&toml::to_string(&s).unwrap()).unwrap();
         assert_eq!(s, back);
     }

@@ -17,6 +17,8 @@ principali su Linux e Windows.
 |---|---|
 | ![Live](docs/screenshots/live-it.png) | ![Chiamate](docs/screenshots/calls-it.png) |
 
+![Visualizzatore foto](docs/screenshots/viewer-it.png)
+
 ## Funzioni
 
 - **Visione dal vivo** del posto esterno (video H264) con **audio
@@ -24,7 +26,10 @@ principali su Linux e Windows.
 - **Apertura di porta e cancello** (tutte le serrature del kit), con conferma.
 - **Luce scale** accesa/spenta, comprese le luci che l'app nasconde.
 - **Notifica sul desktop** quando suonano, con la foto del visitatore.
-- **Storico chiamate** con miniature.
+- **Storico chiamate** con miniature: clic per ingrandire, salvataggio della
+  foto. Le foto dei visitatori vengono anche salvate da sole quando suonano, e
+  dalla visione dal vivo puoi scattare foto a piena risoluzione (il cloud
+  conserva solo immagini da 148×83).
 - Icona nell'area di notifica, avvio automatico, istanza unica, italiano e inglese.
 - Una **CLI** per automatizzare tutto quanto sopra.
 
